@@ -92,7 +92,13 @@ const MODELS = {
   ],
 };
 
-function buildPrompt(arxivUrl) {
+const SUMMARY_MODE = "summary";
+const REPRO_MODE = "reproduction";
+
+function buildPrompt(arxivUrl, mode = SUMMARY_MODE) {
+  if (mode === REPRO_MODE) {
+    return buildReproductionPrompt(arxivUrl);
+  }
   return `You are an expert academic paper summarizer. Summarize the following paper with an extended summary with enough details that a practitioner can understand and implement it. Do not hallucinate details not present in the paper.
 
 Structure your summary as follows:
@@ -122,6 +128,93 @@ What limitations do the authors acknowledge? What future directions do they sugg
 
 ## Key Takeaways
 3-5 bullet points capturing the most important things a reader should remember.`;
+}
+
+function buildReproductionPrompt(arxivUrl) {
+  return `You are helping me understand a research paper deeply enough that I could reproduce it, without making me read the full paper.
+
+Your task is to produce an extended, reproduction-oriented technical brief of the paper.
+
+**Link:** ${arxivUrl}
+
+Important goals:
+
+* Prioritize technical clarity over brevity.
+* Write for someone who knows the field but has not read the paper.
+* Do not give a generic abstract-style summary.
+* The summary shouldn't be too long. Aim for less than 1,500-2,000 words.
+* Separate clearly between:
+  1. what the paper explicitly states,
+  2. what is a reasonable inference,
+  3. what is missing or ambiguous.
+
+Please organize the output into these sections:
+
+## 1. Core idea in plain technical language
+
+* What problem does the paper solve?
+* How does pre-existing work solve that problem?
+* What is the main claim or contribution?
+* Why does the approach matter relative to prior work?
+
+## 2. Problem setup
+
+* Define the task, inputs, outputs, assumptions, and constraints.
+* State the training and inference setting, of the parameters of the study.
+* Clarify notation if needed.
+
+## 3. Method explained step by step
+
+* Describe the full pipeline in the order it is actually executed.
+* Include model architecture, components, objectives, losses, sampling, decoding, retrieval, optimization, filtering, or any other key mechanisms.
+* For equations, explain each term in words.
+* When helpful, translate the method into pseudocode or algorithmic steps.
+
+## 4. What I would need to reproduce it
+
+* Datasets and splits
+* Preprocessing
+* Models used
+* Training procedure
+* Compute requirements
+* Evaluation setup, datasets and baselines
+* Ablations
+* Any nontrivial implementation tricks or engineering details mentioned
+
+## 5. Missing details and likely assumptions
+
+* List details that are underspecified or omitted.
+* For each one, give the most plausible assumption a reproducer might make.
+* Mark these explicitly as inference, not stated fact.
+
+## 6. Results and evidence
+
+* What were the main empirical findings?
+* Which comparisons matter most?
+* What evidence actually supports the paper's claim?
+* Mention important caveats, weak baselines, or possible confounds.
+
+## 7. Failure modes and limitations
+
+* What does the method likely struggle with?
+* What limitations do the authors admit?
+* What additional limitations are visible from the setup?
+
+## 8. Minimal viable reproduction plan
+
+* If I had limited time, compute, and engineering effort, describe the simplest version I could implement that still tests the core claim.
+
+## 9. Questions to verify before implementation
+
+* Give me a short list of concrete uncertainties I should resolve by checking appendix, code, supplementary material, or citations.
+
+Style requirements:
+
+* Be detailed.
+* Prefer concrete details over broad descriptions.
+* If the paper leaves something unclear, say so directly.
+* DO NOT hallucinate missing numbers or settings.
+* If details are absent, say "not specified in the paper" and then provide a clearly labeled best-guess assumption.`;
 }
 
 // --- SSE stream parser helper ---
@@ -168,8 +261,8 @@ async function readSSEStream(response, extractChunk, appendOffset = -1) {
   return fullText;
 }
 
-async function callAnthropic(apiKey, model, paperText, arxivUrl) {
-  const prompt = buildPrompt(arxivUrl);
+async function callAnthropic(apiKey, model, paperText, arxivUrl, mode) {
+  const prompt = buildPrompt(arxivUrl, mode);
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -205,8 +298,8 @@ async function callAnthropic(apiKey, model, paperText, arxivUrl) {
   });
 }
 
-async function callOpenAI(apiKey, model, paperText, arxivUrl) {
-  const prompt = buildPrompt(arxivUrl);
+async function callOpenAI(apiKey, model, paperText, arxivUrl, mode) {
+  const prompt = buildPrompt(arxivUrl, mode);
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -238,8 +331,8 @@ async function callOpenAI(apiKey, model, paperText, arxivUrl) {
   });
 }
 
-async function callGemini(apiKey, model, paperText, arxivUrl) {
-  const prompt = buildPrompt(arxivUrl);
+async function callGemini(apiKey, model, paperText, arxivUrl, mode) {
+  const prompt = buildPrompt(arxivUrl, mode);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
   const response = await fetch(url, {
     method: "POST",
@@ -269,20 +362,20 @@ async function callGemini(apiKey, model, paperText, arxivUrl) {
   });
 }
 
-async function summarize(paperText, arxivUrl) {
+async function summarize(paperText, arxivUrl, mode = SUMMARY_MODE) {
   const settings = await loadSettings();
   if (!settings.apiKey) {
     throw new Error("Please set your API key in Settings (gear icon).");
   }
 
-  setLoading("Generating summary...");
+  setLoading(mode === REPRO_MODE ? "Generating technical brief..." : "Generating summary...");
 
   if (settings.provider === "anthropic") {
-    return callAnthropic(settings.apiKey, settings.model, paperText, arxivUrl);
+    return callAnthropic(settings.apiKey, settings.model, paperText, arxivUrl, mode);
   } else if (settings.provider === "gemini") {
-    return callGemini(settings.apiKey, settings.model, paperText, arxivUrl);
+    return callGemini(settings.apiKey, settings.model, paperText, arxivUrl, mode);
   } else {
-    return callOpenAI(settings.apiKey, settings.model, paperText, arxivUrl);
+    return callOpenAI(settings.apiKey, settings.model, paperText, arxivUrl, mode);
   }
 }
 
@@ -370,7 +463,23 @@ async function askFollowUp(question, paperText) {
 
 // --- Markdown to HTML renderer ---
 function renderMarkdown(md) {
-  // Pre-process: extract tables before escaping HTML
+  // Pre-process: extract math and tables before escaping HTML
+  const mathBlocks = [];
+
+  // Display math: $$...$$ (possibly multiline)
+  md = md.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
+    const placeholder = `%%MATH_${mathBlocks.length}%%`;
+    mathBlocks.push({ tex: tex.trim(), display: true });
+    return placeholder;
+  });
+
+  // Inline math: $...$  (not greedy, single line)
+  md = md.replace(/\$([^\$\n]+?)\$/g, (_, tex) => {
+    const placeholder = `%%MATH_${mathBlocks.length}%%`;
+    mathBlocks.push({ tex: tex.trim(), display: false });
+    return placeholder;
+  });
+
   const tableBlocks = [];
   md = md.replace(/((?:^\|.+\|$\n?){2,})/gm, (match) => {
     const placeholder = `%%TABLE_${tableBlocks.length}%%`;
@@ -417,6 +526,18 @@ function renderMarkdown(md) {
   for (let i = 0; i < tableBlocks.length; i++) {
     const tableHtml = renderTable(tableBlocks[i]);
     html = html.replace(`%%TABLE_${i}%%`, tableHtml);
+  }
+
+  // Restore math blocks rendered with KaTeX
+  for (let i = 0; i < mathBlocks.length; i++) {
+    const { tex, display } = mathBlocks[i];
+    let rendered;
+    try {
+      rendered = katex.renderToString(tex, { displayMode: display, throwOnError: false });
+    } catch {
+      rendered = `<code>${escapeHtml(tex)}</code>`;
+    }
+    html = html.replace(`%%MATH_${i}%%`, rendered);
   }
 
   return `<p>${html}</p>`
@@ -588,14 +709,17 @@ function downloadMarkdown(markdown, filename) {
 }
 
 // --- Main flow ---
-async function handleSummarize(forceRefresh = false) {
+async function handleSummarize(forceRefresh = false, mode = SUMMARY_MODE) {
   if (isSummarizing) return;
   isSummarizing = true;
+
+  // Use mode-specific cache key
+  const cacheId = mode === REPRO_MODE ? `${currentPaperId}_repro` : currentPaperId;
 
   try {
     // Check cache first (unless forced refresh)
     if (!forceRefresh) {
-      const cached = await getCachedSummary(currentPaperId);
+      const cached = await getCachedSummary(cacheId);
       if (cached) {
         summaryMarkdown = cached.markdown;
         summaryContent.innerHTML = renderMarkdown(cached.markdown);
@@ -618,14 +742,14 @@ async function handleSummarize(forceRefresh = false) {
     // Truncate to ~100k chars to stay within context limits
     extractedPaperText = text.slice(0, 100000);
     const arxivUrl = `https://arxiv.org/abs/${currentPaperId}`;
-    const markdown = await summarize(extractedPaperText, arxivUrl);
+    const markdown = await summarize(extractedPaperText, arxivUrl, mode);
 
     summaryMarkdown = markdown;
     summaryContent.innerHTML = renderMarkdown(markdown);
     showState(stateSummary);
 
     // Cache the result
-    await setCachedSummary(currentPaperId, markdown);
+    await setCachedSummary(cacheId, markdown);
   } catch (err) {
     showError(err.message);
   } finally {
@@ -649,9 +773,142 @@ function showCacheBadge(show, timestamp) {
 }
 
 // --- Event listeners ---
-$("summarize-btn").addEventListener("click", () => handleSummarize(false));
+$("summarize-btn").addEventListener("click", () => handleSummarize(false, SUMMARY_MODE));
+$("repro-btn").addEventListener("click", () => handleSummarize(false, REPRO_MODE));
+$("metadata-btn").addEventListener("click", handleCopyMetadata);
 $("retry-btn").addEventListener("click", () => handleSummarize(true));
 $("resummarize-btn").addEventListener("click", () => handleSummarize(true));
+
+// --- Copy Metadata ---
+async function handleCopyMetadata() {
+  if (isSummarizing) return;
+  isSummarizing = true;
+
+  const btn = $("metadata-btn");
+  const originalHtml = btn.innerHTML;
+  btn.textContent = "Extracting...";
+  btn.disabled = true;
+
+  try {
+    const settings = await loadSettings();
+    if (!settings.apiKey) {
+      throw new Error("Please set your API key in Settings (gear icon).");
+    }
+
+    // Extract just the first page for metadata
+    const pdfUrl = getPdfUrl(currentPaperId);
+    const response = await fetch(pdfUrl);
+    if (!response.ok) throw new Error(`Failed to download PDF`);
+    const arrayBuffer = await response.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const page = await pdf.getPage(1);
+    const content = await page.getTextContent();
+    const firstPageText = content.items.map((item) => item.str).join(" ");
+
+    const arxivUrl = `https://arxiv.org/abs/${currentPaperId}`;
+
+    const metadataPrompt = `Extract the metadata from this academic paper's first page. Return ONLY the following format with no other text:
+
+TITLE: [exact paper title]
+AUTHORS: [list all authors separated by commas]
+AFFILIATIONS: [list all unique affiliations separated by commas]
+
+Be precise. Extract exactly what is written.`;
+
+    let result;
+    if (settings.provider === "anthropic") {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": settings.apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-dangerous-direct-browser-access": "true",
+        },
+        body: JSON.stringify({
+          model: settings.model,
+          max_tokens: 1024,
+          messages: [{ role: "user", content: `${metadataPrompt}\n\n---\n\n${firstPageText}` }],
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `API error`); }
+      result = (await res.json()).content[0].text;
+    } else if (settings.provider === "gemini") {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${settings.model}:generateContent?key=${settings.apiKey}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: [{ text: `${metadataPrompt}\n\n---\n\n${firstPageText}` }] }] }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `API error`); }
+      result = (await res.json()).candidates[0].content.parts[0].text;
+    } else {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${settings.apiKey}` },
+        body: JSON.stringify({
+          model: settings.model,
+          max_completion_tokens: 1024,
+          messages: [
+            { role: "system", content: metadataPrompt },
+            { role: "user", content: firstPageText },
+          ],
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `API error`); }
+      result = (await res.json()).choices[0].message.content;
+    }
+
+    // Parse the LLM response
+    const titleMatch = result.match(/TITLE:\s*(.+)/i);
+    const authorsMatch = result.match(/AUTHORS:\s*(.+)/i);
+    const affiliationsMatch = result.match(/AFFILIATIONS:\s*(.+)/i);
+
+    const title = titleMatch ? titleMatch[1].trim() : "Unknown";
+    const allAuthors = authorsMatch ? authorsMatch[1].split(/,\s*/).map(a => a.trim()).filter(Boolean) : [];
+    const allAffiliations = affiliationsMatch ? affiliationsMatch[1].split(/,\s*/).map(a => a.trim()).filter(Boolean) : [];
+
+    // Format authors: first, second, + N authors, last
+    let authorsFormatted;
+    if (allAuthors.length <= 3) {
+      authorsFormatted = allAuthors.join(", ");
+    } else {
+      const first = allAuthors[0];
+      const second = allAuthors[1];
+      const last = allAuthors[allAuthors.length - 1];
+      const remaining = allAuthors.length - 3;
+      authorsFormatted = `${first}, ${second}, +${remaining} authors, ${last}`;
+    }
+
+    // Format affiliations: first and last (if different)
+    let affiliationsFormatted;
+    if (allAffiliations.length === 0) {
+      affiliationsFormatted = "Not specified";
+    } else if (allAffiliations.length === 1) {
+      affiliationsFormatted = allAffiliations[0];
+    } else {
+      const first = allAffiliations[0];
+      const last = allAffiliations[allAffiliations.length - 1];
+      if (first === last) {
+        affiliationsFormatted = first;
+      } else {
+        affiliationsFormatted = `${first}, ${last}`;
+      }
+    }
+
+    const metadata = `${title}\n${arxivUrl}\n${authorsFormatted}\n${affiliationsFormatted}`;
+
+    await navigator.clipboard.writeText(metadata);
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.innerHTML = originalHtml; btn.disabled = false; }, 2000);
+  } catch (err) {
+    btn.textContent = "Error";
+    setTimeout(() => { btn.innerHTML = originalHtml; btn.disabled = false; }, 2000);
+    showError(err.message);
+  } finally {
+    isSummarizing = false;
+  }
+}
 
 $("export-md-btn").addEventListener("click", () => {
   const filename = generateFilename(currentPaperId, summaryMarkdown);

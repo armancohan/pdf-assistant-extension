@@ -131,6 +131,12 @@ main {
   border-color: #b91c1c;
 }
 
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;
@@ -295,6 +301,11 @@ main {
 
 .summary-content strong {
   font-weight: 600;
+}
+
+.summary-content .katex-display {
+  margin: 12px 0;
+  overflow-x: auto;
 }
 
 .summary-content a {
