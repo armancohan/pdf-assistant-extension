@@ -8,6 +8,7 @@ let currentPaperId = "";
 let summaryMarkdown = "";
 let isSummarizing = false;
 let extractedPaperText = ""; // cached for follow-up questions
+let cachedPdfData = null; // cached PDF ArrayBuffer from detectPageCount
 
 // --- DOM refs ---
 const $ = (id) => document.getElementById(id);
@@ -52,15 +53,20 @@ function getPdfUrl(arxivId) {
 
 // --- PDF text extraction ---
 async function extractPdfText(pdfUrl, maxPages) {
-  setLoading("Downloading PDF...");
+  let arrayBuffer;
+  if (cachedPdfData) {
+    setLoading("Extracting text from PDF...");
+    arrayBuffer = cachedPdfData;
+  } else {
+    setLoading("Downloading PDF...");
+    const response = await fetch(pdfUrl);
+    if (!response.ok) throw new Error(`Failed to download PDF (HTTP ${response.status})`);
+    arrayBuffer = await response.arrayBuffer();
+    cachedPdfData = arrayBuffer;
+    setLoading("Extracting text from PDF...");
+  }
 
-  const response = await fetch(pdfUrl);
-  if (!response.ok) throw new Error(`Failed to download PDF (HTTP ${response.status})`);
-
-  const arrayBuffer = await response.arrayBuffer();
-  setLoading("Extracting text from PDF...");
-
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
   const totalPages = pdf.numPages;
   const pagesToRead = Math.min(totalPages, maxPages);
   const textParts = [];
@@ -795,12 +801,18 @@ async function handleCopyMetadata() {
       throw new Error("Please set your API key in Settings (gear icon).");
     }
 
-    // Extract just the first page for metadata
-    const pdfUrl = getPdfUrl(currentPaperId);
-    const response = await fetch(pdfUrl);
-    if (!response.ok) throw new Error(`Failed to download PDF`);
-    const arrayBuffer = await response.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    // Extract just the first page for metadata (reuse cached PDF if available)
+    let arrayBuffer;
+    if (cachedPdfData) {
+      arrayBuffer = cachedPdfData;
+    } else {
+      const pdfUrl = getPdfUrl(currentPaperId);
+      const response = await fetch(pdfUrl);
+      if (!response.ok) throw new Error(`Failed to download PDF`);
+      arrayBuffer = await response.arrayBuffer();
+      cachedPdfData = arrayBuffer;
+    }
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
     const page = await pdf.getPage(1);
     const content = await page.getTextContent();
     const firstPageText = content.items.map((item) => item.str).join(" ");
@@ -1058,7 +1070,8 @@ async function detectPageCount(arxivId) {
     const response = await fetch(pdfUrl, { method: "GET" });
     if (!response.ok) return;
     const arrayBuffer = await response.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    cachedPdfData = arrayBuffer;
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
     const total = pdf.numPages;
     $("paper-pages").textContent = `${total} pages`;
     // Cap the input to total if it exceeds
