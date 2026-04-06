@@ -3,8 +3,8 @@ const assert = require("node:assert/strict");
 
 // Same logic as sidepanel.js generateFilename
 function generateFilename(paperId, markdown) {
-  const yearMatch = paperId.match(/^(\d{2})/);
-  const year = yearMatch ? `20${yearMatch[1]}` : "paper";
+  const dateMatch = paperId.match(/^(\d{2})(\d{2})/);
+  const year = dateMatch ? `20${dateMatch[1]}-${dateMatch[2]}` : "paper";
 
   const titleMatch = markdown.match(/^# (.+)$/m);
   let titleSlug = "summary";
@@ -32,33 +32,39 @@ function generateFilename(paperId, markdown) {
 }
 
 describe("generateFilename", () => {
-  it("generates filename with year, title slug, and author", () => {
+  it("generates filename with year-month, title slug, and author", () => {
     const md = "# Attention Is All You Need\n\n**Authors:** Ashish Vaswani (Google Brain), Noam Shazeer";
-    assert.equal(generateFilename("1706.03762", md), "2017-AttentionIsAllYou-Vaswani.md");
+    assert.equal(generateFilename("1706.03762", md), "2017-06-AttentionIsAllYou-Vaswani.md");
   });
 
   it("handles papers with affiliations in parentheses", () => {
     const md = "# SkillO Framework\n\n**Authors:** John Smith (MIT), Jane Doe (Stanford)";
-    assert.equal(generateFilename("2604.02268", md), "2026-SkilloFramework-Smith.md");
+    assert.equal(generateFilename("2604.02268", md), "2026-04-SkilloFramework-Smith.md");
   });
 
   it("handles missing authors gracefully", () => {
     const md = "# Some Paper Title\n\nNo authors line here.";
-    assert.equal(generateFilename("2401.12345", md), "2024-SomePaperTitle.md");
+    assert.equal(generateFilename("2401.12345", md), "2024-01-SomePaperTitle.md");
   });
 
   it("handles missing title gracefully", () => {
     const md = "No markdown heading here.";
-    assert.equal(generateFilename("2401.12345", md), "2024-summary.md");
+    assert.equal(generateFilename("2401.12345", md), "2024-01-summary.md");
   });
 
   it("strips special characters from title", () => {
     const md = "# GPT-4: A Large-Scale Model!\n\n**Authors:** OpenAI Team";
-    assert.equal(generateFilename("2303.08774", md), "2023-Gpt4ALargescaleModel-Team.md");
+    assert.equal(generateFilename("2303.08774", md), "2023-03-Gpt4ALargescaleModel-Team.md");
   });
 
   it("limits title slug to 4 words", () => {
     const md = "# This Is A Very Long Paper Title Indeed\n\n**Authors:** Jane Doe";
-    assert.equal(generateFilename("2401.00001", md), "2024-ThisIsAVery-Doe.md");
+    assert.equal(generateFilename("2401.00001", md), "2024-01-ThisIsAVery-Doe.md");
+  });
+
+  it("includes month correctly for different months", () => {
+    const md = "# Test Paper\n\n**Authors:** Alice Bob";
+    assert.equal(generateFilename("2312.99999", md), "2023-12-TestPaper-Bob.md");
+    assert.equal(generateFilename("2509.00001", md), "2025-09-TestPaper-Bob.md");
   });
 });

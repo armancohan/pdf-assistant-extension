@@ -665,9 +665,9 @@ async function setCachedSummary(paperId, markdown) {
 
 // --- Smart filename ---
 function generateFilename(paperId, markdown) {
-  // Extract year from arxiv ID (YYMM.NNNNN -> 20YY)
-  const yearMatch = paperId.match(/^(\d{2})/);
-  const year = yearMatch ? `20${yearMatch[1]}` : "paper";
+  // Extract year and month from arxiv ID (YYMM.NNNNN -> 20YY-MM)
+  const dateMatch = paperId.match(/^(\d{2})(\d{2})/);
+  const year = dateMatch ? `20${dateMatch[1]}-${dateMatch[2]}` : "paper";
 
   // Extract title from first "# Title" line
   const titleMatch = markdown.match(/^# (.+)$/m);
