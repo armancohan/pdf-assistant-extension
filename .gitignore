@@ -1,0 +1,9 @@
+node_modules/
+.env
+.env.*
+*.key
+*.pem
+
+# API keys / secrets
+secrets.json
+credentials.json
