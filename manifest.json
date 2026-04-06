@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "ArXiv Paper Summarizer",
+  "version": "1.0.0",
+  "description": "Summarize arxiv papers using an LLM. Click the extension icon on any arxiv page to get a structured summary.",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://arxiv.org/*",
+    "https://www.alphaxiv.org/*",
+    "https://export.arxiv.org/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Summarize this arxiv paper"
+  }
+}

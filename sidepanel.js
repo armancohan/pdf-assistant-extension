@@ -1,0 +1,818 @@
+import * as pdfjsLib from "./lib/pdf.min.mjs";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = "./lib/pdf.worker.min.mjs";
+
+// --- State ---
+let currentUrl = "";
+let currentPaperId = "";
+let summaryMarkdown = "";
+let isSummarizing = false;
+let extractedPaperText = ""; // cached for follow-up questions
+
+// --- DOM refs ---
+const $ = (id) => document.getElementById(id);
+const stateInitial = $("state-initial");
+const stateReady = $("state-ready");
+const stateLoading = $("state-loading");
+const stateError = $("state-error");
+const stateSummary = $("state-summary");
+const loadingStatus = $("loading-status");
+const errorMessage = $("error-message");
+const summaryContent = $("summary-content");
+const paperId = $("paper-id");
+
+// --- UI state management ---
+function showState(state) {
+  [stateInitial, stateReady, stateLoading, stateError, stateSummary].forEach(
+    (el) => el.classList.add("hidden")
+  );
+  state.classList.remove("hidden");
+}
+
+function showError(msg) {
+  errorMessage.textContent = msg;
+  showState(stateError);
+}
+
+function setLoading(msg) {
+  loadingStatus.textContent = msg;
+  showState(stateLoading);
+}
+
+// --- ArXiv URL parsing ---
+function extractArxivId(url) {
+  // Matches: arxiv.org or alphaxiv.org /abs/XXXX.XXXXX, /pdf/XXXX.XXXXX
+  const match = url.match(/(?:arxiv|alphaxiv)\.org\/(?:abs|pdf|html)\/(\d{4}\.\d{4,5}(?:v\d+)?)/);
+  return match ? match[1] : null;
+}
+
+function getPdfUrl(arxivId) {
+  return `https://export.arxiv.org/pdf/${arxivId}`;
+}
+
+// --- PDF text extraction ---
+async function extractPdfText(pdfUrl, maxPages) {
+  setLoading("Downloading PDF...");
+
+  const response = await fetch(pdfUrl);
+  if (!response.ok) throw new Error(`Failed to download PDF (HTTP ${response.status})`);
+
+  const arrayBuffer = await response.arrayBuffer();
+  setLoading("Extracting text from PDF...");
+
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const totalPages = pdf.numPages;
+  const pagesToRead = Math.min(totalPages, maxPages);
+  const textParts = [];
+
+  for (let i = 1; i <= pagesToRead; i++) {
+    setLoading(`Extracting text... page ${i}/${pagesToRead}${pagesToRead < totalPages ? ` (of ${totalPages} total)` : ""}`);
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const pageText = content.items.map((item) => item.str).join(" ");
+    textParts.push(pageText);
+  }
+
+  return textParts.join("\n\n");
+}
+
+// --- LLM API calls ---
+const MODELS = {
+  anthropic: [
+    { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
+    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+  ],
+  openai: [
+    { id: "gpt-5.4", name: "GPT-5.4" },
+    { id: "gpt-4o", name: "GPT-4o" },
+  ],
+  gemini: [
+    { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
+    { id: "gemini-3.1-flash-preview", name: "Gemini 3.1 Flash" },
+  ],
+};
+
+function buildPrompt(arxivUrl) {
+  return `You are an expert academic paper summarizer. Summarize the following paper with an extended summary with enough details that a practitioner can understand and implement it. Do not hallucinate details not present in the paper.
+
+Structure your summary as follows:
+
+# [Paper Title]
+
+**Link:** ${arxivUrl}
+**Authors:** [names and affiliations, as identifiable from the text]
+
+## TL;DR
+A 2-3 sentence high-level summary accessible to a broad technical audience.
+
+## Motivation & Problem Statement
+What problem does this paper address? Why is it important? What gap in existing work does it fill?
+
+## Key Contributions
+Bullet list of the main contributions claimed by the authors.
+
+## Methodology
+Describe the approach, model architecture, algorithm, or framework in enough detail that a practitioner could reimplement the core ideas. Be specific about what makes it novel compared to prior work.
+
+## Key Results
+Summarize the key experimental results, benchmarks, and comparisons. Include specific numbers. Where appropriate, include a small Markdown results table highlighting the most important comparisons (e.g., method vs. baselines on key metrics).
+
+## Limitations & Future Work
+What limitations do the authors acknowledge? What future directions do they suggest?
+
+## Key Takeaways
+3-5 bullet points capturing the most important things a reader should remember.`;
+}
+
+// --- SSE stream parser helper ---
+// appendOffset: if provided, stream chunks are appended to summaryMarkdown starting at that position
+async function readSSEStream(response, extractChunk, appendOffset = -1) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+  const baseMarkdown = appendOffset >= 0 ? summaryMarkdown.slice(0, appendOffset) : "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop(); // keep incomplete line in buffer
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6);
+      if (data === "[DONE]") continue;
+
+      try {
+        const json = JSON.parse(data);
+        const chunk = extractChunk(json);
+        if (chunk) {
+          fullText += chunk;
+          if (appendOffset >= 0) {
+            summaryMarkdown = baseMarkdown + fullText;
+          } else {
+            summaryMarkdown = fullText;
+          }
+          summaryContent.innerHTML = renderMarkdown(summaryMarkdown);
+          summaryContent.scrollTop = summaryContent.scrollHeight;
+        }
+      } catch {
+        // skip unparseable lines
+      }
+    }
+  }
+
+  return fullText;
+}
+
+async function callAnthropic(apiKey, model, paperText, arxivUrl) {
+  const prompt = buildPrompt(arxivUrl);
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    body: JSON.stringify({
+      model: model,
+      max_tokens: 16384,
+      stream: true,
+      messages: [
+        {
+          role: "user",
+          content: `${prompt}\n\n---\n\nHere is the full text of the paper:\n\n${paperText}`,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Anthropic API error (${response.status})`);
+  }
+
+  showState(stateSummary);
+  return readSSEStream(response, (json) => {
+    if (json.type === "content_block_delta" && json.delta?.text) {
+      return json.delta.text;
+    }
+    return null;
+  });
+}
+
+async function callOpenAI(apiKey, model, paperText, arxivUrl) {
+  const prompt = buildPrompt(arxivUrl);
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model,
+      max_completion_tokens: 16384,
+      stream: true,
+      messages: [
+        { role: "system", content: prompt },
+        {
+          role: "user",
+          content: `Here is the full text of the paper:\n\n${paperText}`,
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error?.message || `OpenAI API error (${response.status})`);
+  }
+
+  showState(stateSummary);
+  return readSSEStream(response, (json) => {
+    return json.choices?.[0]?.delta?.content || null;
+  });
+}
+
+async function callGemini(apiKey, model, paperText, arxivUrl) {
+  const prompt = buildPrompt(arxivUrl);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            { text: `${prompt}\n\n---\n\nHere is the full text of the paper:\n\n${paperText}` },
+          ],
+        },
+      ],
+      generationConfig: {
+        maxOutputTokens: 16384,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Gemini API error (${response.status})`);
+  }
+
+  showState(stateSummary);
+  return readSSEStream(response, (json) => {
+    return json.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  });
+}
+
+async function summarize(paperText, arxivUrl) {
+  const settings = await loadSettings();
+  if (!settings.apiKey) {
+    throw new Error("Please set your API key in Settings (gear icon).");
+  }
+
+  setLoading("Generating summary...");
+
+  if (settings.provider === "anthropic") {
+    return callAnthropic(settings.apiKey, settings.model, paperText, arxivUrl);
+  } else if (settings.provider === "gemini") {
+    return callGemini(settings.apiKey, settings.model, paperText, arxivUrl);
+  } else {
+    return callOpenAI(settings.apiKey, settings.model, paperText, arxivUrl);
+  }
+}
+
+// --- Follow-up questions ---
+async function askFollowUp(question, paperText) {
+  const settings = await loadSettings();
+  if (!settings.apiKey) {
+    throw new Error("Please set your API key in Settings (gear icon).");
+  }
+
+  const systemPrompt = `You are an expert academic paper analyst. You have already summarized this paper. The user is now asking a follow-up question. Answer based on the paper's content. Be thorough but concise. Use Markdown formatting.`;
+
+  const userContent = `Here is the paper text:\n\n${paperText}\n\n---\n\nHere is the summary so far:\n\n${summaryMarkdown}\n\n---\n\nFollow-up question: ${question}`;
+
+  // We'll stream the answer and append it
+  const appendStart = summaryMarkdown.length;
+
+  if (settings.provider === "anthropic") {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": settings.apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        max_tokens: 16384,
+        stream: true,
+        messages: [{ role: "user", content: `${systemPrompt}\n\n${userContent}` }],
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Anthropic API error (${response.status})`);
+    }
+    return readSSEStream(response, (json) => {
+      if (json.type === "content_block_delta" && json.delta?.text) return json.delta.text;
+      return null;
+    }, appendStart);
+  } else if (settings.provider === "gemini") {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${settings.model}:streamGenerateContent?alt=sse&key=${settings.apiKey}`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: `${systemPrompt}\n\n${userContent}` }] }],
+        generationConfig: { maxOutputTokens: 16384 },
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || `Gemini API error (${response.status})`);
+    }
+    return readSSEStream(response, (json) => {
+      return json.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    }, appendStart);
+  } else {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${settings.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        max_completion_tokens: 16384,
+        stream: true,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
+        ],
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error?.message || `OpenAI API error (${response.status})`);
+    }
+    return readSSEStream(response, (json) => {
+      return json.choices?.[0]?.delta?.content || null;
+    }, appendStart);
+  }
+}
+
+// --- Markdown to HTML renderer ---
+function renderMarkdown(md) {
+  // Pre-process: extract tables before escaping HTML
+  const tableBlocks = [];
+  md = md.replace(/((?:^\|.+\|$\n?){2,})/gm, (match) => {
+    const placeholder = `%%TABLE_${tableBlocks.length}%%`;
+    tableBlocks.push(match.trim());
+    return placeholder;
+  });
+
+  let html = md
+    // Escape HTML
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    // Markdown links [text](url) — before other inline formatting
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    // Headers
+    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+    // Bold and italic
+    .replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    // Inline code
+    .replace(/`(.+?)`/g, "<code>$1</code>")
+    // Blockquotes
+    .replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>")
+    // Unordered lists
+    .replace(/^- (.+)$/gm, "<li>$1</li>")
+    // Ordered lists
+    .replace(/^\d+\. (.+)$/gm, "<li>$1</li>")
+    // Bare URLs (not already inside an href or anchor tag)
+    .replace(/(?<!href="|">)(https?:\/\/[^\s<)"]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')
+    // Paragraphs (double newline)
+    .replace(/\n\n/g, "</p><p>")
+    // Single newlines
+    .replace(/\n/g, "<br>");
+
+  // Wrap consecutive <li> in <ul>
+  html = html.replace(/((?:<li>.*?<\/li><br>?)+)/g, "<ul>$1</ul>");
+  html = html.replace(/<br><\/ul>/g, "</ul>");
+  html = html.replace(/<ul><br>/g, "<ul>");
+
+  // Restore table blocks as HTML tables
+  for (let i = 0; i < tableBlocks.length; i++) {
+    const tableHtml = renderTable(tableBlocks[i]);
+    html = html.replace(`%%TABLE_${i}%%`, tableHtml);
+  }
+
+  return `<p>${html}</p>`
+    .replace(/<p><\/p>/g, "")
+    .replace(/<p><h/g, "<h")
+    .replace(/<\/h(\d)><\/p>/g, "</h$1>")
+    .replace(/<p><ul>/g, "<ul>")
+    .replace(/<\/ul><\/p>/g, "</ul>")
+    .replace(/<p><blockquote>/g, "<blockquote>")
+    .replace(/<\/blockquote><\/p>/g, "</blockquote>")
+    .replace(/<p><table/g, "<table")
+    .replace(/<\/table><\/p>/g, "</table>");
+}
+
+function renderTable(tableBlock) {
+  const rows = tableBlock.split("\n").filter((r) => r.trim());
+  if (rows.length < 2) return tableBlock;
+
+  // Check if second row is a separator (e.g., |---|---|)
+  const isSeparator = (row) => /^\|[\s\-:|]+\|$/.test(row.trim());
+  const hasSeparator = isSeparator(rows[1]);
+
+  const parseRow = (row) =>
+    row.split("|").slice(1, -1).map((cell) => cell.trim());
+
+  let html = '<table>';
+
+  if (hasSeparator) {
+    // Header row
+    const headerCells = parseRow(rows[0]);
+    html += "<thead><tr>" + headerCells.map((c) => `<th>${escapeHtml(c)}</th>`).join("") + "</tr></thead>";
+    // Body rows
+    html += "<tbody>";
+    for (let i = 2; i < rows.length; i++) {
+      const cells = parseRow(rows[i]);
+      html += "<tr>" + cells.map((c) => `<td>${escapeHtml(c)}</td>`).join("") + "</tr>";
+    }
+    html += "</tbody>";
+  } else {
+    // No header separator — all body rows
+    html += "<tbody>";
+    for (const row of rows) {
+      const cells = parseRow(row);
+      html += "<tr>" + cells.map((c) => `<td>${escapeHtml(c)}</td>`).join("") + "</tr>";
+    }
+    html += "</tbody>";
+  }
+
+  html += "</table>";
+  return html;
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// --- Settings ---
+const API_KEY_KEYS = {
+  anthropic: "apiKey_anthropic",
+  openai: "apiKey_openai",
+  gemini: "apiKey_gemini",
+};
+
+async function loadSettings() {
+  const keys = ["provider", "model", "maxPages", "theme", ...Object.values(API_KEY_KEYS)];
+  const data = await chrome.storage.local.get(keys);
+  const provider = data.provider || "anthropic";
+  return {
+    provider,
+    apiKey: data[API_KEY_KEYS[provider]] || "",
+    apiKeys: {
+      anthropic: data[API_KEY_KEYS.anthropic] || "",
+      openai: data[API_KEY_KEYS.openai] || "",
+      gemini: data[API_KEY_KEYS.gemini] || "",
+    },
+    model: data.model || MODELS.anthropic[0].id,
+    maxPages: data.maxPages || 10,
+    theme: data.theme || "auto",
+  };
+}
+
+async function saveSettings(provider, apiKeys, model, maxPages, theme) {
+  await chrome.storage.local.set({
+    provider,
+    model,
+    maxPages,
+    theme,
+    [API_KEY_KEYS.anthropic]: apiKeys.anthropic,
+    [API_KEY_KEYS.openai]: apiKeys.openai,
+    [API_KEY_KEYS.gemini]: apiKeys.gemini,
+  });
+}
+
+// --- Theme ---
+function applyTheme(theme) {
+  if (theme === "auto") {
+    document.body.removeAttribute("data-theme");
+  } else {
+    document.body.setAttribute("data-theme", theme);
+  }
+}
+
+function populateModels(provider) {
+  const modelSelect = $("model-select");
+  modelSelect.innerHTML = "";
+  MODELS[provider].forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.name;
+    modelSelect.appendChild(opt);
+  });
+}
+
+// --- Cache ---
+async function getCachedSummary(paperId) {
+  const key = `cache_${paperId}`;
+  const data = await chrome.storage.local.get([key]);
+  return data[key] || null;
+}
+
+async function setCachedSummary(paperId, markdown) {
+  const key = `cache_${paperId}`;
+  await chrome.storage.local.set({ [key]: { markdown, timestamp: Date.now() } });
+}
+
+// --- Smart filename ---
+function generateFilename(paperId, markdown) {
+  // Extract year from arxiv ID (YYMM.NNNNN -> 20YY)
+  const yearMatch = paperId.match(/^(\d{2})/);
+  const year = yearMatch ? `20${yearMatch[1]}` : "paper";
+
+  // Extract title from first "# Title" line
+  const titleMatch = markdown.match(/^# (.+)$/m);
+  let titleSlug = "summary";
+  if (titleMatch) {
+    titleSlug = titleMatch[1]
+      .replace(/[^a-zA-Z0-9\s]/g, "")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 4)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join("");
+  }
+
+  // Extract first author's last name from "**Authors:**" line
+  const authorsMatch = markdown.match(/\*\*Authors?:\*\*\s*(.+)/i);
+  let firstAuthor = "";
+  if (authorsMatch) {
+    // Try to get the first name, handling "First Last, ..." or "First Last (Affiliation)"
+    const authorStr = authorsMatch[1].split(/[,;]/)[0].replace(/\(.*?\)/g, "").trim();
+    const nameParts = authorStr.split(/\s+/);
+    firstAuthor = nameParts[nameParts.length - 1].replace(/[^a-zA-Z]/g, "");
+  }
+
+  const parts = [year, titleSlug];
+  if (firstAuthor) parts.push(firstAuthor);
+  return parts.join("-") + ".md";
+}
+
+// --- Markdown export ---
+function downloadMarkdown(markdown, filename) {
+  const blob = new Blob([markdown], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// --- Main flow ---
+async function handleSummarize(forceRefresh = false) {
+  if (isSummarizing) return;
+  isSummarizing = true;
+
+  try {
+    // Check cache first (unless forced refresh)
+    if (!forceRefresh) {
+      const cached = await getCachedSummary(currentPaperId);
+      if (cached) {
+        summaryMarkdown = cached.markdown;
+        summaryContent.innerHTML = renderMarkdown(cached.markdown);
+        showState(stateSummary);
+        showCacheBadge(true, cached.timestamp);
+        isSummarizing = false;
+        return;
+      }
+    }
+
+    showCacheBadge(false);
+    const maxPages = Math.max(1, parseInt($("pages-input").value, 10) || 10);
+    const pdfUrl = getPdfUrl(currentPaperId);
+    const text = await extractPdfText(pdfUrl, maxPages);
+
+    if (text.trim().length < 100) {
+      throw new Error("Could not extract meaningful text from the PDF.");
+    }
+
+    // Truncate to ~100k chars to stay within context limits
+    extractedPaperText = text.slice(0, 100000);
+    const arxivUrl = `https://arxiv.org/abs/${currentPaperId}`;
+    const markdown = await summarize(extractedPaperText, arxivUrl);
+
+    summaryMarkdown = markdown;
+    summaryContent.innerHTML = renderMarkdown(markdown);
+    showState(stateSummary);
+
+    // Cache the result
+    await setCachedSummary(currentPaperId, markdown);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    isSummarizing = false;
+  }
+}
+
+function showCacheBadge(show, timestamp) {
+  const badge = $("cache-badge");
+  const resummarizeBtn = $("resummarize-btn");
+  if (show) {
+    const date = new Date(timestamp);
+    const dateStr = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    badge.textContent = `Cached ${dateStr}`;
+    badge.classList.remove("hidden");
+    resummarizeBtn.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+    resummarizeBtn.classList.add("hidden");
+  }
+}
+
+// --- Event listeners ---
+$("summarize-btn").addEventListener("click", () => handleSummarize(false));
+$("retry-btn").addEventListener("click", () => handleSummarize(true));
+$("resummarize-btn").addEventListener("click", () => handleSummarize(true));
+
+$("export-md-btn").addEventListener("click", () => {
+  const filename = generateFilename(currentPaperId, summaryMarkdown);
+  downloadMarkdown(summaryMarkdown, filename);
+});
+
+$("copy-btn").addEventListener("click", async () => {
+  await navigator.clipboard.writeText(summaryMarkdown);
+  const btn = $("copy-btn");
+  const original = btn.innerHTML;
+  btn.textContent = "Copied!";
+  setTimeout(() => (btn.innerHTML = original), 1500);
+});
+
+// Settings
+let editingApiKeys = { anthropic: "", openai: "", gemini: "" };
+let currentSettingsProvider = "anthropic";
+
+$("settings-btn").addEventListener("click", async () => {
+  const settings = await loadSettings();
+  editingApiKeys = { ...settings.apiKeys };
+  currentSettingsProvider = settings.provider;
+  $("provider-select").value = settings.provider;
+  $("api-key-input").value = editingApiKeys[settings.provider];
+  populateModels(settings.provider);
+  $("model-select").value = settings.model;
+  $("max-pages-input").value = settings.maxPages;
+  $("theme-select").value = settings.theme;
+  $("settings-overlay").classList.remove("hidden");
+});
+
+$("provider-select").addEventListener("change", (e) => {
+  // Save current key input to the current provider before switching
+  editingApiKeys[currentSettingsProvider] = $("api-key-input").value;
+
+  // Switch to new provider
+  currentSettingsProvider = e.target.value;
+  $("api-key-input").value = editingApiKeys[currentSettingsProvider];
+  populateModels(currentSettingsProvider);
+});
+
+$("api-key-input").addEventListener("input", () => {
+  editingApiKeys[currentSettingsProvider] = $("api-key-input").value;
+});
+
+$("save-settings-btn").addEventListener("click", async () => {
+  editingApiKeys[currentSettingsProvider] = $("api-key-input").value;
+  const maxPages = parseInt($("max-pages-input").value, 10) || 10;
+  const theme = $("theme-select").value;
+  await saveSettings(
+    currentSettingsProvider,
+    editingApiKeys,
+    $("model-select").value,
+    Math.max(1, maxPages),
+    theme
+  );
+  applyTheme(theme);
+  $("settings-overlay").classList.add("hidden");
+});
+
+$("cancel-settings-btn").addEventListener("click", () => {
+  $("settings-overlay").classList.add("hidden");
+});
+
+// Follow-up questions
+async function handleFollowUp() {
+  const input = $("followup-input");
+  const question = input.value.trim();
+  if (!question || isSummarizing) return;
+
+  isSummarizing = true;
+  input.value = "";
+  $("followup-btn").disabled = true;
+
+  try {
+    // Append the question as a heading to the markdown
+    summaryMarkdown += `\n\n---\n\n## Q: ${question}\n\n`;
+    summaryContent.innerHTML = renderMarkdown(summaryMarkdown);
+    summaryContent.scrollTop = summaryContent.scrollHeight;
+
+    // Stream the answer, appending after the question heading
+    const answer = await askFollowUp(question, extractedPaperText);
+
+    // Update cache with the extended content
+    await setCachedSummary(currentPaperId, summaryMarkdown);
+  } catch (err) {
+    summaryMarkdown += `\n\n*Error: ${err.message}*`;
+    summaryContent.innerHTML = renderMarkdown(summaryMarkdown);
+  } finally {
+    isSummarizing = false;
+    $("followup-btn").disabled = false;
+  }
+}
+
+$("followup-btn").addEventListener("click", handleFollowUp);
+$("followup-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    handleFollowUp();
+  }
+});
+
+// --- Initialize: get current tab URL ---
+async function init() {
+  // Apply saved theme
+  const settings = await loadSettings();
+  applyTheme(settings.theme);
+
+  // Request URL from background
+  chrome.runtime.sendMessage({ type: "GET_TAB_URL" }, (response) => {
+    if (response?.url) {
+      handleUrl(response.url);
+    }
+  });
+
+  // Also listen for pushed URL updates
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === "TAB_URL") {
+      handleUrl(message.url);
+    }
+  });
+}
+
+async function handleUrl(url) {
+  currentUrl = url;
+  const id = extractArxivId(url);
+  if (id) {
+    currentPaperId = id;
+    paperId.textContent = `arxiv:${id}`;
+    $("paper-pages").textContent = "";
+    showState(stateReady);
+
+    // Load default maxPages from settings into the inline input
+    const settings = await loadSettings();
+    $("pages-input").value = settings.maxPages;
+
+    // Detect total page count in the background
+    detectPageCount(id);
+  } else {
+    showState(stateInitial);
+  }
+}
+
+async function detectPageCount(arxivId) {
+  try {
+    const pdfUrl = getPdfUrl(arxivId);
+    const response = await fetch(pdfUrl, { method: "GET" });
+    if (!response.ok) return;
+    const arrayBuffer = await response.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const total = pdf.numPages;
+    $("paper-pages").textContent = `${total} pages`;
+    // Cap the input to total if it exceeds
+    const input = $("pages-input");
+    input.max = total;
+    if (parseInt(input.value, 10) > total) {
+      input.value = total;
+    }
+  } catch {
+    // silently ignore — page count is a nice-to-have
+  }
+}
+
+init();
