@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "ArXiv Paper Summarizer",
+  "name": "PDF Assistant",
   "version": "1.0.0",
-  "description": "Summarize academic papers from arxiv, OpenReview, and other sources using an LLM. Click the extension icon on any paper page to get a structured summary.",
+  "description": "Summarize academic and technical PDFs (arxiv, OpenReview, conference proceedings, journals, local files) using an LLM.",
   "permissions": [
     "sidePanel",
     "activeTab",
@@ -32,6 +32,6 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "Summarize this arxiv paper"
+    "default_title": "Summarize this PDF"
   }
 }
