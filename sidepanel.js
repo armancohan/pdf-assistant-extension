@@ -1298,4 +1298,79 @@ async function detectPageCount(pdfUrl) {
   }
 }
 
+// --- Drag and drop / file picker ---
+async function handleDroppedPdf(file) {
+  if (!file || file.type !== "application/pdf") {
+    showError("Please drop a PDF file.");
+    return;
+  }
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    cachedPdfData = arrayBuffer;
+    currentUrl = "";
+    currentPdfUrl = "";
+    currentPaperLink = file.name;
+    currentPaperId = `local_${file.name.replace(/\.pdf$/i, "").replace(/[^a-zA-Z0-9]/g, "_").slice(0, 60)}`;
+    isArxivPaper = false;
+
+    paperId.textContent = `Local: ${file.name}`;
+    $("paper-pages").textContent = "";
+    showState(stateReady);
+
+    const settings = await loadSettings();
+    $("pages-input").value = settings.maxPages;
+
+    // Get page count from the loaded buffer
+    try {
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)) }).promise;
+      const total = pdf.numPages;
+      $("paper-pages").textContent = `${total} pages`;
+      const input = $("pages-input");
+      input.max = total;
+      if (parseInt(input.value, 10) > total) input.value = total;
+    } catch {
+      // ignore — page count is nice-to-have
+    }
+  } catch (err) {
+    showError(`Failed to read PDF: ${err.message}`);
+  }
+}
+
+const dropzone = $("dropzone");
+if (dropzone) {
+  ["dragenter", "dragover"].forEach((evt) => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.add("drag-over");
+    });
+  });
+  ["dragleave", "drop"].forEach((evt) => {
+    dropzone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropzone.classList.remove("drag-over");
+    });
+  });
+  dropzone.addEventListener("drop", (e) => {
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleDroppedPdf(file);
+  });
+}
+
+// Accept drops anywhere in the side panel; block default browser navigation
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer?.files?.[0];
+  if (file && file.type === "application/pdf") handleDroppedPdf(file);
+});
+
+$("browse-btn")?.addEventListener("click", () => $("file-input").click());
+$("file-input")?.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (file) handleDroppedPdf(file);
+  e.target.value = ""; // allow re-selecting the same file
+});
+
 init();

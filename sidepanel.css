@@ -81,6 +81,31 @@ main {
   line-height: 1.5;
 }
 
+.dropzone {
+  margin: 16px 24px 24px;
+  padding: 24px 16px;
+  border: 2px dashed #cbd5e1;
+  border-radius: 8px;
+  text-align: center;
+  color: #64748b;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.dropzone svg {
+  margin-bottom: 8px;
+  opacity: 0.6;
+}
+
+.dropzone p {
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.dropzone.drag-over {
+  border-color: #b91c1c;
+  background: #fef2f2;
+}
+
 /* Paper info */
 .paper-info {
   background: #fff;
@@ -502,6 +527,8 @@ body[data-theme="dark"] header h1 { color: #e2e5ea; }
 body[data-theme="dark"] .icon-btn { color: #94a3b8; }
 body[data-theme="dark"] .icon-btn:hover { background: #2a2d3a; color: #e2e5ea; }
 body[data-theme="dark"] .empty-state { color: #64748b; }
+body[data-theme="dark"] .dropzone { border-color: #2a2d3a; color: #94a3b8; }
+body[data-theme="dark"] .dropzone.drag-over { border-color: #dc2626; background: #1e1517; }
 body[data-theme="dark"] .paper-info { background: #1a1d27; border-color: #2a2d3a; }
 body[data-theme="dark"] .paper-id { color: #94a3b8; }
 body[data-theme="dark"] .paper-pages { color: #64748b; }
@@ -551,6 +578,8 @@ body[data-theme="dark"] .followup-input-row input::placeholder { color: #64748b;
   body:not([data-theme]) .icon-btn { color: #94a3b8; }
   body:not([data-theme]) .icon-btn:hover { background: #2a2d3a; color: #e2e5ea; }
   body:not([data-theme]) .empty-state { color: #64748b; }
+  body:not([data-theme]) .dropzone { border-color: #2a2d3a; color: #94a3b8; }
+  body:not([data-theme]) .dropzone.drag-over { border-color: #dc2626; background: #1e1517; }
   body:not([data-theme]) .paper-info { background: #1a1d27; border-color: #2a2d3a; }
   body:not([data-theme]) .paper-id { color: #94a3b8; }
   body:not([data-theme]) .paper-pages { color: #64748b; }
