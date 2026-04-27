@@ -151,13 +151,28 @@ const SUMMARY_MODE = "summary";
 const REPRO_MODE = "reproduction";
 const FLASHCARD_MODE = "flashcards";
 
-function buildPrompt(arxivUrl, mode = SUMMARY_MODE) {
+const DOMAIN_MED_TEXTBOOK = "med-textbook";
+const DOMAIN_MED_JOURNAL = "med-journal";
+const DOMAIN_CS_AI = "cs-ai";
+const DOMAIN_VET_RADIOLOGY = "vet-radiology";
+const DEFAULT_DOMAIN = DOMAIN_MED_JOURNAL;
+// Domains that have a Reproduction Brief mode (the rest hide the button)
+const DOMAINS_WITH_REPRO_BRIEF = new Set([DOMAIN_CS_AI]);
+
+function buildPrompt(arxivUrl, mode = SUMMARY_MODE, domain = DEFAULT_DOMAIN) {
   if (mode === REPRO_MODE) {
     return buildReproductionPrompt(arxivUrl);
   }
   if (mode === FLASHCARD_MODE) {
-    return buildFlashcardPrompt(arxivUrl);
+    return buildFlashcardPrompt(arxivUrl, domain);
   }
+  if (domain === DOMAIN_MED_TEXTBOOK) return buildMedicalTextbookSummary(arxivUrl);
+  if (domain === DOMAIN_MED_JOURNAL) return buildMedicalJournalSummary(arxivUrl);
+  if (domain === DOMAIN_VET_RADIOLOGY) return buildVeterinaryRadiologySummary(arxivUrl);
+  return buildCsAiSummary(arxivUrl);
+}
+
+function buildCsAiSummary(arxivUrl) {
   return `You are an expert academic paper summarizer. Summarize the following paper with an extended summary with enough details that a practitioner can understand and implement it. Do not hallucinate details not present in the paper.
 
 Structure your summary as follows:
@@ -196,6 +211,173 @@ What limitations do the authors acknowledge? What future directions do they sugg
 
 ## Highly Relevant References
 From the paper's references, identify up to 3 that the paper most heavily builds upon (e.g., foundational methods it extends, key baselines, or core techniques it adapts). Prefer recent references (published within the last 1-2 years). For each, provide: the title, authors, year, a one-sentence description of its relevance to this paper, and the arxiv link if available.`;
+}
+
+function buildMedicalTextbookSummary(sourceUrl) {
+  return `You are helping me create comprehensive study notes from a section of a medical textbook. The reader should be able to (1) completely understand the main points and (2) review and recall the material quickly later.
+
+**Source:** ${sourceUrl}
+
+Structure your output as follows:
+
+# [Section / Chapter Title]
+
+**Source:** ${sourceUrl}
+
+## Micro-Summary
+A 1-3 sentence high-density distillation of the entire section. This is what every student should remember if they only have 30 seconds. Capture the absolute essence — the key disease/concept and what makes it clinically distinctive.
+
+## Core Concepts & Definitions
+The fundamental concepts the section introduces. Define each term precisely using exact medical terminology. Include short, structured definitions suitable for note-taking.
+
+## Mechanisms & Pathophysiology
+For disease, anatomy, or pharmacology topics: explain the mechanism step by step — etiology → pathophysiology → clinical manifestations → treatment rationale. Use cause→effect chains. For non-disease topics, explain the underlying mechanism or principle.
+
+## Clinical Pearls / High-Yield Points
+The "must-know" facts. These are the points that drive clinical decision-making and frequently appear on exams: classic presentations, diagnostic criteria, red flags, common pitfalls, distinctive features.
+
+## Diagnostic & Clinical Workflow (if applicable)
+Stepwise approach: how to diagnose, classify, and treat. Include differentials, key labs/imaging, and decision points. First-line vs second-line treatments.
+
+## Important Numbers & Values
+Only those clinically essential to memorize: dose ranges, lab cutoffs, half-lives, prevalence/incidence, time windows. Use a small table when there are several.
+
+## Common Pitfalls & Misconceptions
+Things commonly misunderstood; classic confusion points (e.g., "X is often confused with Y because…"); subtle distinctions.
+
+## Quick-Recall Checklist
+A bullet list of single-line factoids designed for rapid review (e.g., the night before an exam). Each bullet should stand alone.
+
+Style requirements:
+- Use exact medical terminology.
+- Prefer concrete numbers over vague language ("incidence ~5/100,000" not "rare").
+- Use cause→effect arrows where useful.
+- Each section should add new value — do not repeat content across sections.
+- Be precise and information-dense; avoid filler.`;
+}
+
+function buildMedicalJournalSummary(sourceUrl) {
+  return `You are summarizing a medical research paper for a clinician/researcher. Be precise, evidence-focused, and clinically grounded. Do not hallucinate details not in the paper.
+
+Structure your output as follows:
+
+# [Paper Title]
+
+**Link:** ${sourceUrl}
+**Authors:** [names and affiliations, as identifiable from the text]
+**Journal / Year:** [if identifiable]
+
+## TL;DR
+2-3 sentences: what was studied, the key finding, and why it matters clinically.
+
+## Background & Clinical Question
+The clinical context, the knowledge gap, and the specific PICO-style question (Population, Intervention, Comparator, Outcome) the study addresses.
+
+## Study Design
+- **Type:** RCT, prospective cohort, case-control, cross-sectional, meta-analysis, etc.
+- **Population:** inclusion/exclusion criteria, demographics, sample size (n)
+- **Setting & period:** where and when the study took place
+- **Intervention(s) / Exposure(s)**
+- **Comparator**
+- **Primary outcome(s)** and **secondary outcomes**
+- **Statistical approach:** key methods (e.g., Cox regression, intention-to-treat, multiple imputation)
+
+## Key Results
+Specific numbers: effect sizes, 95% CIs, p-values, NNT/NNH where applicable. Include a small Markdown table when comparing arms or subgroups. State whether the primary outcome was met.
+
+## Clinical Implications
+What does this mean for practice? Does it change management? For whom (which patient subgroups)? Are there caveats for generalizability?
+
+## Strengths
+Methodological strengths (design, randomization, adjudication, follow-up, sample size, etc.).
+
+## Limitations & Risks of Bias
+Generalizability, confounders, missing data, statistical concerns, conflicts of interest, industry funding, surrogate vs. patient-important outcomes.
+
+## Bottom Line
+1-2 sentences: should this change practice, and if so, for whom?
+
+## Highly Relevant References
+From the paper's references, identify up to 3 that the paper most heavily builds upon (foundational trials, prior meta-analyses, guideline-defining studies). Prefer recent references (last 1-2 years where possible). For each, provide: title, authors, year, a one-sentence description of relevance, and a link if available (PubMed, DOI, or arxiv).
+
+Style requirements:
+- Use exact medical terminology.
+- Prefer concrete numbers over qualitative language.
+- Distinguish between *what the paper claims* and *what the evidence actually supports*.
+- If something is unclear or not specified, say so explicitly.`;
+}
+
+function buildVeterinaryRadiologySummary(sourceUrl) {
+  return `You are an expert veterinary radiologist and medical educator summarizing a textbook chapter for a learner reviewing for board exams (ACVR, ECVDI) or preparing to read clinical cases. Your goal is to produce a summary that allows the learner to refresh the chapter's content in 10–20 minutes without losing the specific facts that matter clinically and on exams.
+
+**Source:** ${sourceUrl}
+
+### Core principle
+
+A summary that loses the specifics is a summary that has lost most of its diagnostic value. The specifics that matter most are: numeric thresholds and timing, formal classification systems (stages, types, grades), named signs and eponyms, characteristic imaging appearances (modality, sequence, view, location), mimics and discriminators, and species/breed/signalment differences. Compress narrative aggressively, but preserve every one of these whenever the chapter provides them. When in doubt, keep the specific.
+
+### Output structure
+
+Produce a markdown document with the sections below. Some chapters will have rich content for every section, others will not. Include every applicable section, but let the depth match what the chapter provides. Do not pad sections to fill them out, and do not invent material.
+
+# [Chapter Title]
+
+**Source:** ${sourceUrl}
+
+## Chapter overview
+2–4 sentences naming the topic, anatomic region or system, imaging modalities discussed, and main clinical contexts.
+
+## Examination technique
+Modality and equipment selection, patient positioning and preparation (sedation/anesthesia where relevant), view and projection choices, technical principles specific to the region (e.g., bisecting angle technique for dental imaging, contrast timing for cross-sectional studies). Include radiation safety considerations when raised.
+
+## Normal anatomy and appearance
+For each anatomic structure or organ covered, describe the normal imaging appearance: size ranges, layering or zonal architecture, signal/echogenicity/attenuation characteristics, landmarks. When the chapter gives different normals for different physiologic states (cycle phase, age, pregnancy, lactation, dentition stage), present each one. When the chapter contrasts species, breeds, or signalments, present each. Preserve naming/numbering systems the chapter uses (e.g., modified Triadan dentition).
+
+## Physiologic and developmental variation
+If the chapter covers cyclical changes, developmental stages, age-related variation, pregnancy progression, lactation, eruption sequences, or post-treatment evolution, dedicate a section. Use compact tables for inherently tabular data (timing of milestones, measurements through a cycle, healing stages, eruption ages).
+
+## Classification systems and grading
+If the chapter presents formal classification systems, give each its own subsection with the full set of stages/types, the defining feature of each, and the imaging correlate. Examples: AVDC tooth resorption stages 1–5 and types 1–3, periodontal disease stages, fracture classifications, hip dysplasia scoring (OFA, PennHIP, FCI), elbow dysplasia grading. These are heavily tested and frequently looked up. Make them easy to find. Omit the section if the chapter has no formal classifications.
+
+## Pathology
+For each disease or abnormality the chapter discusses, give a compact entry with:
+- A one-line definition or pathophysiologic basis.
+- The classic imaging appearance, with modality and view specified.
+- Key discriminators from mimics, when discussed.
+- Associated findings, complications, or concurrent diseases mentioned.
+- Species, breed, age, or signalment predilections noted.
+
+Write these as tight prose paragraphs, one per entity. Avoid bullet lists within entries unless the chapter itself enumerates a discrete set of findings. Group related entities under subheadings when the chapter does (e.g., periodontal disease, endodontic disease, tooth resorption, neoplasia, developmental abnormalities).
+
+## Quantitative reference
+A consolidated section listing every numeric value, threshold, formula, or measurement-based criterion in the chapter (size cutoffs, timing windows, heart rate thresholds, predictive formulas, exposure parameters, prevalence percentages). Format as a short reference list grouped by topic. Keep it short if the chapter is quantitatively sparse — do not invent numbers.
+
+## Named signs, classifications, and eponyms
+A consolidated list of every named radiographic sign, eponym, classification system reference, or specific named entity in the chapter, each with a one-line description. Omit the section if the chapter has none.
+
+## High-yield pearls
+5–15 short statements capturing the chapter's most exam-relevant or clinically important points. These should be the things a question writer would build a stem around: classic mimics, don't-miss diagnoses, characteristic appearances, common pitfalls, clinically actionable thresholds. Each pearl should stand alone in 1–2 sentences.
+
+## Common pitfalls and mimics
+Distinct from pearls. Normal variants or benign findings that look like pathology, and pathologic entities that look like one another. Always include the discriminating feature when the chapter provides one (e.g., chevron lucencies vs. periapical lesions, mental foramen vs. periapical lucency, follicles vs. cysts, postoperative changes vs. pathology).
+
+## Interventional considerations
+If the chapter discusses image-guided procedures (biopsy, aspiration, therapeutic intervention), summarize indications, contraindications, technique notes, and reported outcomes. Omit if not addressed.
+
+### Style and formatting
+
+- Write in narrative prose for sections that describe concepts, appearances, and reasoning.
+- Reserve tables for inherently tabular data (timing, measurements, formulas, parallel-attribute classifications).
+- Reserve bullet points for the pearls section, the quantitative reference, the named signs list, and the pitfalls section.
+- Be specific. "The lesion is hyperechoic with distal acoustic enhancement" is useful; "the lesion has characteristic features" is not. When the chapter gives a range, give the range. When it names a sign, name it. When it cites a percentage, include it.
+- When the chapter compares species, populations, or any parallel groups, preserve the comparison structurally — do not collapse it into a single statement that loses the contrast. If the contrast is dense, a small two-column table is appropriate.
+- Use formal naming/numbering systems (Triadan, anatomic conventions) verbatim — the learner needs to recognize them on exams.
+- Do not invent content. If the chapter does not address something, leave it out. Preserve any uncertainty the chapter expresses.
+- Do not include references, author lists, acknowledgments, or chapter front matter.
+
+### Length
+
+Aim for roughly 10–20% of the original chapter length. Density of information matters more than length: a tight summary that preserves all the specifics beats a long summary that buries them in prose.`;
 }
 
 function buildReproductionPrompt(arxivUrl) {
@@ -288,7 +470,14 @@ Style requirements:
 From the paper's references, identify up to 3 that the paper most heavily builds upon (e.g., foundational methods it extends, key baselines, or core techniques it adapts). Prefer recent references (published within the last 1-2 years). For each, provide: the title, authors, year, a one-sentence description of its relevance to this paper, and the arxiv link if available.`;
 }
 
-function buildFlashcardPrompt(arxivUrl) {
+function buildFlashcardPrompt(sourceUrl, domain = DEFAULT_DOMAIN) {
+  if (domain === DOMAIN_MED_TEXTBOOK) return buildMedicalTextbookFlashcards(sourceUrl);
+  if (domain === DOMAIN_MED_JOURNAL) return buildMedicalJournalFlashcards(sourceUrl);
+  if (domain === DOMAIN_VET_RADIOLOGY) return buildVeterinaryRadiologyFlashcards(sourceUrl);
+  return buildCsAiFlashcards(sourceUrl);
+}
+
+function buildCsAiFlashcards(arxivUrl) {
   return `You are helping me create study flashcards from a research paper for future recall.
 
 **Link:** ${arxivUrl}
@@ -323,6 +512,172 @@ A: [answer]
 (continue for all cards)
 
 Do not number the cards. Use exactly "Q: " and "A: " prefixes. Put a blank line between each Q/A pair.`;
+}
+
+function buildMedicalTextbookFlashcards(sourceUrl) {
+  return `You are creating high-yield medical flashcards from a textbook section. The cards must be optimized for *long-term clinical recall and education* — the kind a medical student or resident would use for spaced repetition over months and years.
+
+**Source:** ${sourceUrl}
+
+Generate 15-25 flashcards covering:
+
+1. **Definitions** — every important medical term with its precise definition.
+2. **Mechanisms** — pathophysiology and pharmacology cause-and-effect chains. Use "What is the mechanism of X?" or "Why does Y occur?" format.
+3. **Diagnostic criteria** — formal criteria that establish a diagnosis. "What are the diagnostic criteria for X?"
+4. **Classic presentations** — typical symptoms/signs/labs for textbook cases. "What is the classic presentation of X?"
+5. **First-line vs second-line management** — clear treatment hierarchies. "What is the first-line treatment for X?"
+6. **High-yield distinguishing features** — how to differentiate similar diseases or drugs. "How is X distinguished from Y?"
+7. **Red flags / can't-miss diagnoses** — critical warning signs.
+8. **Numbers worth memorizing** — only when clinically essential (specific cutoffs, dose ranges, half-lives, lab thresholds, time windows).
+9. **Common confusions / pitfalls** — things students typically get wrong.
+
+Rules:
+- Every question MUST be self-contained — include the topic/disease/drug name in the question itself. Example: "In Type 2 Diabetes, what is the first-line pharmacologic treatment for a patient without contraindications?" (not just "What is the first-line treatment?")
+- Use active recall format: "What is the mechanism of...", "Why does...", "How is X distinguished from Y?", "What are the diagnostic criteria for...".
+- Answers should be concise (1-3 sentences) but contain the high-yield clinical info — no fluff, no hedging.
+- For mechanisms: use cause→effect arrows or short chains in the answer.
+- For numbers: state them precisely; don't be vague.
+- Avoid trivia. Every card should test something a clinician would actually use in practice or on board exams.
+- Use exact medical terminology (don't dumb down).
+- Cluster related concepts with consistent question stems where useful (e.g., always "diagnostic criteria for X" / "classic presentation of X").
+
+Format your output EXACTLY as follows (required for Anki import):
+
+# [Section / Chapter Title] — Flashcards
+
+**Source:** ${sourceUrl}
+
+Q: [self-contained question with topic context]
+A: [concise high-yield answer]
+
+Q: [next question]
+A: [answer]
+
+(continue for all cards)
+
+Use exactly "Q: " and "A: " prefixes. Blank line between pairs. Do not number the cards.`;
+}
+
+function buildMedicalJournalFlashcards(sourceUrl) {
+  return `You are creating flashcards from a medical research paper, optimized for clinical recall of the study's findings and implications.
+
+**Link:** ${sourceUrl}
+
+Generate 10-15 flashcards covering:
+
+1. **Study question** — what specific clinical question this paper addressed (PICO).
+2. **Study design** — the type of study and its key methodological features.
+3. **Population** — who was studied (inclusion/exclusion, n, key demographics).
+4. **Intervention/exposure & comparator** — what was compared to what.
+5. **Primary outcome result** — the key effect size, CI, p-value, NNT/NNH.
+6. **Important secondary findings** — clinically relevant secondary outcomes.
+7. **Clinical implications** — does this change practice, and for whom?
+8. **Limitations** — the most important methodological caveats.
+9. **Definitions** — any new clinical concepts, scoring systems, or biomarkers introduced or operationalized by the paper.
+
+Rules:
+- Every question MUST be self-contained — include the paper's short identifier (first author, year, or trial acronym) in each question. Example: "In the EMPEROR-Reduced trial (2020), what was the primary outcome and effect size?" (not just "What was the primary outcome?")
+- Answers should be precise — state effect sizes with confidence intervals when known.
+- Distinguish between what the paper claims and what the evidence supports.
+- Avoid trivia about the paper itself; focus on clinically actionable information.
+- Use exact medical terminology.
+- Include the paper title and link on the first card.
+
+Format your output EXACTLY as follows (required for Anki import):
+
+# [Paper Title] — Flashcards
+
+**Link:** ${sourceUrl}
+
+Q: [self-contained question with paper identifier]
+A: [precise answer]
+
+Q: [next question]
+A: [answer]
+
+(continue for all cards)
+
+Use exactly "Q: " and "A: " prefixes. Blank line between pairs. Do not number the cards.`;
+}
+
+function buildVeterinaryRadiologyFlashcards(sourceUrl) {
+  return `You are an expert veterinary radiologist and medical educator creating flashcards from a radiology textbook chapter. Adapt terminology and clinical context to the source material. Your goal is to produce high-quality cards that promote durable recall, diagnostic reasoning, and board exam readiness (ACVR, ECVDI, or the relevant certifying body). Cards should prepare the learner for the kinds of questions these exams ask, which often go beyond simple recognition.
+
+**Source:** ${sourceUrl}
+
+### Output format
+
+Begin with a short markdown header:
+
+# [Chapter Title] — Flashcards
+
+**Source:** ${sourceUrl}
+
+Then output the cards in a fenced TSV code block, like this:
+
+\`\`\`tsv
+front	back	tags	topic	type	difficulty	board_relevance	card_format
+\`\`\`
+
+Inside the code block, output one card per line, with no header row inside the TSV itself. Each line must have exactly eight fields separated by single tab characters, in this order:
+
+1. \`front\` — for cloze cards, the full sentence with \`{{c1::...}}\` markup. For basic cards, the question or prompt.
+2. \`back\` — for cloze cards, leave empty. For basic cards, the answer.
+3. \`tags\` — space-separated tags with no spaces inside individual tags. Use underscores for multi-word tags.
+4. \`topic\` — short tag indicating anatomical region, modality, species (if relevant), or disease category.
+5. \`type\` — one of: \`definition\`, \`imaging_findings\`, \`differential\`, \`reasoning\`, \`pathophysiology\`, \`technique\`, \`clinical_correlation\`, \`pearl\`, \`next_step\`, \`classification\`, \`named_sign\`, \`quantitative\`.
+6. \`difficulty\` — one of: \`basic\`, \`intermediate\`, \`advanced\`.
+7. \`board_relevance\` — one of: \`high\`, \`medium\`, \`low\`.
+8. \`card_format\` — \`cloze\` or \`basic\`.
+
+Critical formatting rules:
+- Never include literal tab characters or newlines inside any field. If you need a list inside a field, separate items with \`; \` (semicolon and space) or \`<br>\` if HTML rendering is desired.
+- Do not wrap fields in quotes.
+- Do not output anything outside the markdown header and the TSV code block.
+
+### Choosing between cloze and basic format
+
+Use cloze when the fact has a clear single-term or short-phrase answer embedded in a natural sentence: numeric thresholds, classification stage definitions, named sign locations, anatomic naming codes, eruption ages, prevalence figures, and similar atomic facts. Cloze is also good when the surrounding context aids recall.
+
+Use basic (front and back) when the answer is multi-part, requires reasoning, lists differentials, asks the learner to justify a choice, describes an imaging appearance with several features, or compares two entities. Reasoning cards should always be basic format.
+
+A single concept can produce multiple cards across both formats. For example, a classification system might generate one cloze card per stage plus one basic reasoning card asking the learner to distinguish two adjacent stages.
+
+### Coverage priorities
+
+- **Quantitative facts:** numeric thresholds, size cutoffs, timing windows, prevalence percentages, fetal heart rate cutoffs, exposure parameters, predictive formulas. Almost always best as cloze cards.
+- **Classification systems:** any formal staging, grading, or typing system in the chapter (AVDC tooth resorption stages 1–5 and types 1–3, periodontal disease stages, fracture classifications, hip/elbow dysplasia grading). Generate one cloze or basic card per stage/type, plus a basic reasoning card for distinguishing adjacent stages.
+- **Named signs and eponyms:** every named radiographic sign, eponym, or characteristic appearance gets a card pairing the name with its meaning, and another card pairing the appearance with the diagnosis.
+- **Anatomic naming and numbering systems:** when the chapter uses formal systems like the modified Triadan tooth numbering, generate cards that drill the system. The learner needs to recognize "tooth 204" or similar on exams.
+- **Species and population comparisons:** when the chapter contrasts dog vs. cat, pubertal vs. prepubertal, pregnant vs. nonpregnant, or any other parallel groups, generate cards that test the contrast directly. A card asking "what is normal X" without specifying which group misses the point.
+- **Imaging appearances:** classic appearance of each disease, with modality, sequence/phase, and location specified. Best as basic cards because the answer typically has several components.
+- **Differentials and discriminators:** top differentials for a finding, with the discriminating feature for each. Best as basic cards.
+- **Mimics and pitfalls:** normal variants or benign findings that look like pathology (chevron lucency, mental foramen, follicles, postoperative changes), and pathologic entities that look like one another. Always include the discriminating feature.
+- **Reasoning and integration:** cards that ask the learner to combine multiple facts to reach a diagnosis, justify why one diagnosis is more likely than another, or predict what additional finding would change the differential. Always basic format. The back should walk through the logic in 2–3 sentences.
+- **Next-step and management:** when the chapter discusses workup, follow-up intervals, or management decisions, generate cards that test these.
+
+### Card-writing principles
+
+- Phrase the front so a knowledgeable reader could answer without seeing the back. Avoid pronouns or references that depend on chapter context. "What are the imaging features of canine acanthomatous ameloblastoma?" is good; "What are the features of this tumor?" is not.
+- For imaging findings, be specific. Name the modality, sequence/phase, and anatomic location.
+- For differentials, list the top 3–5 entities with a brief discriminator for each, separated by \`; \` within the field.
+- For numeric values, always include units and the clinical context. "Fetal heart rate below 150–180 bpm indicates severe distress in dogs" is useful; "150–180 bpm" alone is not.
+- For classification stages, include both the stage name/number and the defining feature in cloze form, e.g.: \`AVDC tooth resorption {{c1::stage 2}} shows {{c2::moderate cementum or cementum-and-enamel resorption extending to dentin without pulp cavity exposure}}\`.
+- Avoid redundant cards that test the same thing in nearly identical wording.
+
+### Cloze construction
+
+Use \`{{c1::...}}\`, \`{{c2::...}}\` syntax for deletions. A single sentence can contain multiple deletions when independently testable. Keep cloze sentences readable — if a sentence becomes a string of deletions with little connective text, split into several cards.
+
+For numeric facts, prefer cloze. For classification stages, generate one cloze card per stage with the stage definition as the cloze.
+
+### Board exam optimization
+
+Mark cards higher on \`board_relevance\` when the content is something a question writer would likely build a stem around: classic associations, pathognomonic signs, don't-miss diagnoses, common mimics with their discriminators, structured reporting categories, named criteria, clinically actionable thresholds. Mark lower when the content is conceptually useful but unlikely to be tested directly.
+
+### Volume
+
+Aim for thorough coverage of testable content. Density of testable concepts in the chapter determines the count — typically 40–150 cards depending on chapter scope. Classification-heavy and quantitative-heavy chapters trend higher. Err on the side of more cards with narrower scope over fewer cards that bundle multiple facts.`;
 }
 
 // --- SSE stream parser helper ---
@@ -369,8 +724,7 @@ async function readSSEStream(response, extractChunk, appendOffset = -1) {
   return fullText;
 }
 
-async function callAnthropic(apiKey, model, paperText, arxivUrl, mode, customPrompt) {
-  const prompt = customPrompt || buildPrompt(arxivUrl, mode);
+async function callAnthropic(apiKey, model, paperText, prompt) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -406,8 +760,7 @@ async function callAnthropic(apiKey, model, paperText, arxivUrl, mode, customPro
   });
 }
 
-async function callOpenAI(apiKey, model, paperText, arxivUrl, mode, customPrompt) {
-  const prompt = customPrompt || buildPrompt(arxivUrl, mode);
+async function callOpenAI(apiKey, model, paperText, prompt) {
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -439,8 +792,7 @@ async function callOpenAI(apiKey, model, paperText, arxivUrl, mode, customPrompt
   });
 }
 
-async function callGemini(apiKey, model, paperText, arxivUrl, mode, customPrompt) {
-  const prompt = customPrompt || buildPrompt(arxivUrl, mode);
+async function callGemini(apiKey, model, paperText, prompt) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
   const response = await fetch(url, {
     method: "POST",
@@ -478,12 +830,20 @@ async function summarize(paperText, arxivUrl, mode = SUMMARY_MODE, customPrompt 
 
   setLoading(mode === REPRO_MODE ? "Generating technical brief..." : mode === FLASHCARD_MODE ? "Generating flashcards..." : "Generating summary...");
 
-  if (settings.provider === "anthropic") {
-    return callAnthropic(settings.apiKey, settings.model, paperText, arxivUrl, mode, customPrompt);
-  } else if (settings.provider === "gemini") {
-    return callGemini(settings.apiKey, settings.model, paperText, arxivUrl, mode, customPrompt);
+  let prompt;
+  if (customPrompt) {
+    prompt = customPrompt;
   } else {
-    return callOpenAI(settings.apiKey, settings.model, paperText, arxivUrl, mode, customPrompt);
+    const saved = await loadCustomPrompt(settings.domain, mode);
+    prompt = saved !== null ? sentinelToUrl(saved, arxivUrl) : buildPrompt(arxivUrl, mode, settings.domain);
+  }
+
+  if (settings.provider === "anthropic") {
+    return callAnthropic(settings.apiKey, settings.model, paperText, prompt);
+  } else if (settings.provider === "gemini") {
+    return callGemini(settings.apiKey, settings.model, paperText, prompt);
+  } else {
+    return callOpenAI(settings.apiKey, settings.model, paperText, prompt);
   }
 }
 
@@ -571,7 +931,14 @@ async function askFollowUp(question, paperText) {
 
 // --- Markdown to HTML renderer ---
 function renderMarkdown(md) {
-  // Pre-process: extract math and tables before escaping HTML
+  // Pre-process: extract fenced code blocks first so their contents aren't mangled
+  const codeBlocks = [];
+  md = md.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (_, lang, body) => {
+    const placeholder = `%%CODEBLOCK_${codeBlocks.length}%%`;
+    codeBlocks.push({ lang: lang || "", body });
+    return placeholder;
+  });
+
   const mathBlocks = [];
 
   // Display math: $$...$$ (possibly multiline)
@@ -648,6 +1015,17 @@ function renderMarkdown(md) {
     html = html.replace(`%%MATH_${i}%%`, rendered);
   }
 
+  // Restore fenced code blocks
+  for (let i = 0; i < codeBlocks.length; i++) {
+    const { lang, body } = codeBlocks[i];
+    const escaped = body
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    const langClass = lang ? ` class="lang-${lang}"` : "";
+    html = html.replace(`%%CODEBLOCK_${i}%%`, `<pre${langClass}><code>${escaped}</code></pre>`);
+  }
+
   return `<p>${html}</p>`
     .replace(/<p><\/p>/g, "")
     .replace(/<p><h/g, "<h")
@@ -657,7 +1035,9 @@ function renderMarkdown(md) {
     .replace(/<p><blockquote>/g, "<blockquote>")
     .replace(/<\/blockquote><\/p>/g, "</blockquote>")
     .replace(/<p><table/g, "<table")
-    .replace(/<\/table><\/p>/g, "</table>");
+    .replace(/<\/table><\/p>/g, "</table>")
+    .replace(/<p><pre/g, "<pre")
+    .replace(/<\/pre><\/p>/g, "</pre>");
 }
 
 function renderTable(tableBlock) {
@@ -710,7 +1090,7 @@ const API_KEY_KEYS = {
 };
 
 async function loadSettings() {
-  const keys = ["provider", "model", "maxPages", "theme", ...Object.values(API_KEY_KEYS)];
+  const keys = ["provider", "model", "maxPages", "theme", "domain", ...Object.values(API_KEY_KEYS)];
   const data = await chrome.storage.local.get(keys);
   const provider = data.provider || "anthropic";
   return {
@@ -724,6 +1104,7 @@ async function loadSettings() {
     model: data.model || MODELS.anthropic[0].id,
     maxPages: data.maxPages || 10,
     theme: data.theme || "auto",
+    domain: data.domain || DEFAULT_DOMAIN,
   };
 }
 
@@ -737,6 +1118,40 @@ async function saveSettings(provider, apiKeys, model, maxPages, theme) {
     [API_KEY_KEYS.openai]: apiKeys.openai,
     [API_KEY_KEYS.gemini]: apiKeys.gemini,
   });
+}
+
+async function saveDomain(domain) {
+  await chrome.storage.local.set({ domain });
+}
+
+// --- Custom prompt persistence (per domain × mode) ---
+const URL_SENTINEL = "__PAPER_URL__";
+
+function customPromptKey(domain, mode) {
+  return `customPrompt_${domain}_${mode}`;
+}
+
+function urlToSentinel(text, url) {
+  if (!url) return text;
+  return text.split(url).join(URL_SENTINEL);
+}
+
+function sentinelToUrl(text, url) {
+  return text.split(URL_SENTINEL).join(url || "");
+}
+
+async function loadCustomPrompt(domain, mode) {
+  const key = customPromptKey(domain, mode);
+  const data = await chrome.storage.local.get([key]);
+  return data[key] || null;
+}
+
+async function saveCustomPrompt(domain, mode, value) {
+  await chrome.storage.local.set({ [customPromptKey(domain, mode)]: value });
+}
+
+async function deleteCustomPrompt(domain, mode) {
+  await chrome.storage.local.remove(customPromptKey(domain, mode));
 }
 
 // --- Theme ---
@@ -889,12 +1304,46 @@ $("resummarize-btn").addEventListener("click", () => handleSummarize(true));
 
 // --- Prompt editor ---
 let promptEditorMode = SUMMARY_MODE;
+let currentDomain = DEFAULT_DOMAIN;
 
-function loadPromptForMode(mode) {
+async function applyDomainUI(domain) {
+  currentDomain = domain;
+  // Reproduction Brief only applies to a subset of domains (currently CS-AI)
+  const reproBtn = $("repro-btn");
+  if (reproBtn) {
+    reproBtn.classList.toggle("hidden", !DOMAINS_WITH_REPRO_BRIEF.has(domain));
+  }
+  // Reflect whether the currently displayed mode has a saved custom prompt
+  const saved = await loadCustomPrompt(domain, promptEditorMode);
+  updateCustomPromptIndicator(saved !== null);
+}
+
+async function loadPromptForMode(mode) {
   promptEditorMode = mode;
   const paperLink = currentPaperLink || "https://arxiv.org/abs/XXXX.XXXXX";
-  $("prompt-textarea").value = buildPrompt(paperLink, mode);
+  const saved = await loadCustomPrompt(currentDomain, mode);
+  if (saved !== null) {
+    $("prompt-textarea").value = sentinelToUrl(saved, paperLink);
+  } else {
+    $("prompt-textarea").value = buildPrompt(paperLink, mode, currentDomain);
+  }
+  updateCustomPromptIndicator(saved !== null);
 }
+
+function updateCustomPromptIndicator(isCustom) {
+  const indicator = $("custom-prompt-indicator");
+  if (indicator) indicator.classList.toggle("hidden", !isCustom);
+}
+
+$("domain-select").addEventListener("change", async (e) => {
+  const domain = e.target.value;
+  await saveDomain(domain);
+  await applyDomainUI(domain);
+  // If editor is open, refresh the displayed prompt
+  if (!$("prompt-editor-container").classList.contains("hidden")) {
+    await loadPromptForMode(promptEditorMode);
+  }
+});
 
 $("toggle-prompt-btn").addEventListener("click", () => {
   const container = $("prompt-editor-container");
@@ -927,12 +1376,42 @@ $("flashcard-btn").addEventListener("mouseenter", () => {
   }
 });
 
-$("reset-prompt-btn").addEventListener("click", () => {
+$("reset-prompt-btn").addEventListener("click", async () => {
+  await deleteCustomPrompt(currentDomain, promptEditorMode);
   loadPromptForMode(promptEditorMode);
+});
+
+// Auto-save user edits to the prompt textarea (debounced)
+let saveTimer = null;
+$("prompt-textarea").addEventListener("input", () => {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    const paperLink = currentPaperLink || "https://arxiv.org/abs/XXXX.XXXXX";
+    const value = $("prompt-textarea").value;
+    const defaultValue = buildPrompt(paperLink, promptEditorMode, currentDomain);
+    if (value === defaultValue) {
+      await deleteCustomPrompt(currentDomain, promptEditorMode);
+      updateCustomPromptIndicator(false);
+    } else {
+      // Store with paper URL replaced by sentinel so it works across papers
+      await saveCustomPrompt(currentDomain, promptEditorMode, urlToSentinel(value, paperLink));
+      updateCustomPromptIndicator(true);
+    }
+  }, 500);
 });
 
 // --- Anki CSV export ---
 function flashcardsToAnkiCSV(markdown) {
+  // 1. Rich TSV format (e.g. veterinary radiology): a fenced ```tsv code block with multi-column rows.
+  //    Pass through verbatim — Anki imports tab-separated lines directly.
+  const tsvBlock = markdown.match(/```(?:tsv)?\n?([\s\S]*?)```/);
+  if (tsvBlock) {
+    const body = tsvBlock[1].trim();
+    // Sanity check: at least one tab-separated line
+    if (body.includes("\t")) return body;
+  }
+
+  // 2. Q/A format: parse and emit 2-column TSV.
   const pairs = [];
   const regex = /^Q:\s*(.+)\nA:\s*([\s\S]*?)(?=\n\nQ:|\n*$)/gm;
   let match;
@@ -941,13 +1420,13 @@ function flashcardsToAnkiCSV(markdown) {
     const answer = match[2].trim();
     if (question && answer) pairs.push({ question, answer });
   }
-  // Anki TSV format: question<tab>answer, with quotes escaped
-  const lines = pairs.map(({ question, answer }) => {
-    const q = `"${question.replace(/"/g, '""')}"`;
-    const a = `"${answer.replace(/"/g, '""')}"`;
-    return `${q}\t${a}`;
-  });
-  return lines.join("\n");
+  return pairs
+    .map(({ question, answer }) => {
+      const q = `"${question.replace(/"/g, '""')}"`;
+      const a = `"${answer.replace(/"/g, '""')}"`;
+      return `${q}\t${a}`;
+    })
+    .join("\n");
 }
 
 $("export-anki-btn").addEventListener("click", () => {
@@ -1217,9 +1696,11 @@ $("followup-input").addEventListener("keydown", (e) => {
 
 // --- Initialize: get current tab URL ---
 async function init() {
-  // Apply saved theme
+  // Apply saved theme and domain
   const settings = await loadSettings();
   applyTheme(settings.theme);
+  $("domain-select").value = settings.domain;
+  await applyDomainUI(settings.domain);
 
   // Request URL from background
   chrome.runtime.sendMessage({ type: "GET_TAB_URL" }, (response) => {

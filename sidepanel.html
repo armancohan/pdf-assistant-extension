@@ -90,13 +90,25 @@
         <label for="pages-input">Pages to summarize</label>
         <input type="number" id="pages-input" min="1" max="999" value="10">
       </div>
+      <div class="domain-control">
+        <label for="domain-select">Prompt template</label>
+        <select id="domain-select">
+          <option value="med-textbook">Medical Textbook</option>
+          <option value="med-journal">Medical Journal Paper</option>
+          <option value="vet-radiology">Veterinary Radiology</option>
+          <option value="cs-ai">Computer Science Empirical (AI)</option>
+        </select>
+      </div>
       <div class="prompt-editor">
-        <button id="toggle-prompt-btn" class="btn btn-secondary btn-small">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-          </svg>
-          Edit Prompt
-        </button>
+        <div class="prompt-editor-toolbar">
+          <button id="toggle-prompt-btn" class="btn btn-secondary btn-small">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+            Edit Prompt
+          </button>
+          <span id="custom-prompt-indicator" class="custom-badge hidden" title="A custom prompt is saved for this template and will be used.">custom saved</span>
+        </div>
         <div id="prompt-editor-container" class="hidden">
           <textarea id="prompt-textarea" rows="12" placeholder="Prompt will appear here..."></textarea>
           <div class="prompt-editor-actions">
