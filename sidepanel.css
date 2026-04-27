@@ -131,6 +131,38 @@ main {
   border-color: #b91c1c;
 }
 
+.prompt-editor {
+  margin-bottom: 8px;
+}
+
+.prompt-editor #prompt-editor-container {
+  margin-top: 8px;
+}
+
+.prompt-editor textarea {
+  width: 100%;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #1e293b;
+  resize: vertical;
+}
+
+.prompt-editor textarea:focus {
+  outline: none;
+  border-color: #b91c1c;
+}
+
+.prompt-editor-actions {
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+}
+
 .action-buttons {
   display: flex;
   flex-direction: column;
@@ -476,6 +508,8 @@ body[data-theme="dark"] .paper-pages { color: #64748b; }
 body[data-theme="dark"] .pages-control label { color: #94a3b8; }
 body[data-theme="dark"] .pages-control input { background: #1a1d27; color: #e2e5ea; border-color: #2a2d3a; }
 body[data-theme="dark"] .pages-control input:focus { border-color: #dc2626; }
+body[data-theme="dark"] .prompt-editor textarea { background: #1a1d27; color: #e2e5ea; border-color: #2a2d3a; }
+body[data-theme="dark"] .prompt-editor textarea:focus { border-color: #dc2626; }
 body[data-theme="dark"] .btn-primary { background: #dc2626; }
 body[data-theme="dark"] .btn-primary:hover { background: #ef4444; }
 body[data-theme="dark"] .btn-secondary { background: #1a1d27; color: #d1d5db; border-color: #2a2d3a; }
@@ -523,6 +557,8 @@ body[data-theme="dark"] .followup-input-row input::placeholder { color: #64748b;
   body:not([data-theme]) .pages-control label { color: #94a3b8; }
   body:not([data-theme]) .pages-control input { background: #1a1d27; color: #e2e5ea; border-color: #2a2d3a; }
   body:not([data-theme]) .pages-control input:focus { border-color: #dc2626; }
+  body:not([data-theme]) .prompt-editor textarea { background: #1a1d27; color: #e2e5ea; border-color: #2a2d3a; }
+  body:not([data-theme]) .prompt-editor textarea:focus { border-color: #dc2626; }
   body:not([data-theme]) .btn-primary { background: #dc2626; }
   body:not([data-theme]) .btn-primary:hover { background: #ef4444; }
   body:not([data-theme]) .btn-secondary { background: #1a1d27; color: #d1d5db; border-color: #2a2d3a; }

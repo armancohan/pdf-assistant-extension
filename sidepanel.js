@@ -4,11 +4,31 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "./lib/pdf.worker.min.mjs";
 
 // --- State ---
 let currentUrl = "";
-let currentPaperId = "";
+let currentPaperId = ""; // arxiv ID if available, otherwise a slug from URL
+let currentPdfUrl = ""; // direct PDF download URL
+let currentPaperLink = ""; // link to show in summary (arxiv abs page or original URL)
+let isArxivPaper = false;
 let summaryMarkdown = "";
 let isSummarizing = false;
 let extractedPaperText = ""; // cached for follow-up questions
 let cachedPdfData = null; // cached PDF ArrayBuffer from detectPageCount
+let lastSummarizeMode = "summary";
+
+// --- Clipboard helper (side panels often lose focus) ---
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+  }
+}
 
 // --- DOM refs ---
 const $ = (id) => document.getElementById(id);
@@ -51,6 +71,35 @@ function getPdfUrl(arxivId) {
   return `https://export.arxiv.org/pdf/${arxivId}`;
 }
 
+// --- Generic PDF URL detection ---
+function isPdfUrl(url) {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    // Direct .pdf link (works for any site)
+    if (u.pathname.toLowerCase().endsWith(".pdf")) return true;
+    // Known paper hosts that serve PDFs at specific paths
+    if (u.hostname.includes("openreview.net") && u.pathname.includes("/pdf")) return true;
+    if (u.hostname.includes("proceedings.neurips.cc")) return true;
+    if (u.hostname.includes("proceedings.mlr.press")) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function slugFromUrl(url) {
+  // Create a short, filesystem-safe ID from a URL (including query params for sites like OpenReview)
+  try {
+    const u = new URL(url);
+    const full = (u.pathname + u.search).replace(/\.pdf$/i, "").replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+    const slug = full.slice(-60);
+    return `${u.hostname.replace(/\./g, "_")}_${slug}`;
+  } catch {
+    return "paper";
+  }
+}
+
 // --- PDF text extraction ---
 async function extractPdfText(pdfUrl, maxPages) {
   let arrayBuffer;
@@ -66,7 +115,7 @@ async function extractPdfText(pdfUrl, maxPages) {
     setLoading("Extracting text from PDF...");
   }
 
-  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)) }).promise;
   const totalPages = pdf.numPages;
   const pagesToRead = Math.min(totalPages, maxPages);
   const textParts = [];
@@ -100,10 +149,14 @@ const MODELS = {
 
 const SUMMARY_MODE = "summary";
 const REPRO_MODE = "reproduction";
+const FLASHCARD_MODE = "flashcards";
 
 function buildPrompt(arxivUrl, mode = SUMMARY_MODE) {
   if (mode === REPRO_MODE) {
     return buildReproductionPrompt(arxivUrl);
+  }
+  if (mode === FLASHCARD_MODE) {
+    return buildFlashcardPrompt(arxivUrl);
   }
   return `You are an expert academic paper summarizer. Summarize the following paper with an extended summary with enough details that a practitioner can understand and implement it. Do not hallucinate details not present in the paper.
 
@@ -117,23 +170,32 @@ Structure your summary as follows:
 ## TL;DR
 A 2-3 sentence high-level summary accessible to a broad technical audience.
 
-## Motivation & Problem Statement
-What problem does this paper address? Why is it important? What gap in existing work does it fill?
-
-## Key Contributions
-Bullet list of the main contributions claimed by the authors.
+## Motivation, Problem Statement, and Prior work
+* What problem does this paper address? 
+* Why is it important? 
+* How does prior work address this issue and why it is not sufficient? 
+* Where are the gaps the work is targetting to address?
 
 ## Methodology
 Describe the approach, model architecture, algorithm, or framework in enough detail that a practitioner could reimplement the core ideas. Be specific about what makes it novel compared to prior work.
+* First describe the general approach in a high level. 
+* Describe the full pipeline in the order it is actually executed with enough detail that a practioner can reproduce.
+* If applicable, discuss components of the study, main objectives or research questions, overall design, specific models studies/used, losses, sampling, decoding, retrieval, optimization, filtering, or any other key mechanisms.
+* If the work is an analysis framework or evaluation benchmark discuss any design decisions and main research questions and study design and approach.
+* When helpful, translate the method into pseudocode or algorithmic steps.
+* Methodology should include a clear and detailed explanation so it is easy to follow and reproduce.
 
 ## Key Results
-Summarize the key experimental results, benchmarks, and comparisons. Include specific numbers. Where appropriate, include a small Markdown results table highlighting the most important comparisons (e.g., method vs. baselines on key metrics).
+Summarize the key experimental results, datasets used, and comparisons. Include specific numbers. Where appropriate, include a small Markdown results table highlighting the most important comparisons (e.g., method vs. baselines on key metrics).
 
 ## Limitations & Future Work
 What limitations do the authors acknowledge? What future directions do they suggest?
 
 ## Key Takeaways
-3-5 bullet points capturing the most important things a reader should remember.`;
+3-5 bullet points capturing the most important things a reader should remember.
+
+## Highly Relevant References
+From the paper's references, identify up to 3 that the paper most heavily builds upon (e.g., foundational methods it extends, key baselines, or core techniques it adapts). Prefer recent references (published within the last 1-2 years). For each, provide: the title, authors, year, a one-sentence description of its relevance to this paper, and the arxiv link if available.`;
 }
 
 function buildReproductionPrompt(arxivUrl) {
@@ -220,7 +282,47 @@ Style requirements:
 * Prefer concrete details over broad descriptions.
 * If the paper leaves something unclear, say so directly.
 * DO NOT hallucinate missing numbers or settings.
-* If details are absent, say "not specified in the paper" and then provide a clearly labeled best-guess assumption.`;
+* If details are absent, say "not specified in the paper" and then provide a clearly labeled best-guess assumption.
+
+## 10. Highly Relevant References
+From the paper's references, identify up to 3 that the paper most heavily builds upon (e.g., foundational methods it extends, key baselines, or core techniques it adapts). Prefer recent references (published within the last 1-2 years). For each, provide: the title, authors, year, a one-sentence description of its relevance to this paper, and the arxiv link if available.`;
+}
+
+function buildFlashcardPrompt(arxivUrl) {
+  return `You are helping me create study flashcards from a research paper for future recall.
+
+**Link:** ${arxivUrl}
+
+Generate 10-15 high-quality flashcards that cover:
+
+1. **Core concepts and definitions** — Any new terms, frameworks, or concepts the paper introduces or defines (e.g., "monitorability tax", "CoT monitorability"). These are especially important because they may be adopted by future papers.
+2. **Key methodology** — How the approach works at a high level, what makes it novel.
+3. **Important distinctions** — How this work differs from prior approaches or baselines.
+4. **Key results and takeaways** — The most significant findings and their implications.
+5. **Limitations and open questions** — What the method cannot do or what remains unsolved.
+
+Rules:
+- Every question MUST be self-contained — a reader seeing the card months later should know which paper it refers to. Include the paper's short title (or acronym) and year in each question. For example, instead of "What is Compression Maximization?", write "In the ACON paper (2025), what is Compression Maximization?".
+- Questions should test *understanding*, not rote memorization. Ask "why" and "how" questions, not "what was the accuracy on X".
+- Answers should be concise (1-3 sentences) but complete enough to stand alone.
+- For novel terminology introduced by the paper, create a dedicated card for each term with its precise definition and significance.
+- Include the paper title and link on the first card.
+
+Format your output EXACTLY as follows (this format is required for Anki import):
+
+# [Paper Title] — Flashcards
+
+**Link:** ${arxivUrl}
+
+Q: [question]
+A: [answer]
+
+Q: [question]
+A: [answer]
+
+(continue for all cards)
+
+Do not number the cards. Use exactly "Q: " and "A: " prefixes. Put a blank line between each Q/A pair.`;
 }
 
 // --- SSE stream parser helper ---
@@ -267,8 +369,8 @@ async function readSSEStream(response, extractChunk, appendOffset = -1) {
   return fullText;
 }
 
-async function callAnthropic(apiKey, model, paperText, arxivUrl, mode) {
-  const prompt = buildPrompt(arxivUrl, mode);
+async function callAnthropic(apiKey, model, paperText, arxivUrl, mode, customPrompt) {
+  const prompt = customPrompt || buildPrompt(arxivUrl, mode);
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -304,8 +406,8 @@ async function callAnthropic(apiKey, model, paperText, arxivUrl, mode) {
   });
 }
 
-async function callOpenAI(apiKey, model, paperText, arxivUrl, mode) {
-  const prompt = buildPrompt(arxivUrl, mode);
+async function callOpenAI(apiKey, model, paperText, arxivUrl, mode, customPrompt) {
+  const prompt = customPrompt || buildPrompt(arxivUrl, mode);
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -337,8 +439,8 @@ async function callOpenAI(apiKey, model, paperText, arxivUrl, mode) {
   });
 }
 
-async function callGemini(apiKey, model, paperText, arxivUrl, mode) {
-  const prompt = buildPrompt(arxivUrl, mode);
+async function callGemini(apiKey, model, paperText, arxivUrl, mode, customPrompt) {
+  const prompt = customPrompt || buildPrompt(arxivUrl, mode);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
   const response = await fetch(url, {
     method: "POST",
@@ -368,20 +470,20 @@ async function callGemini(apiKey, model, paperText, arxivUrl, mode) {
   });
 }
 
-async function summarize(paperText, arxivUrl, mode = SUMMARY_MODE) {
+async function summarize(paperText, arxivUrl, mode = SUMMARY_MODE, customPrompt = null) {
   const settings = await loadSettings();
   if (!settings.apiKey) {
     throw new Error("Please set your API key in Settings (gear icon).");
   }
 
-  setLoading(mode === REPRO_MODE ? "Generating technical brief..." : "Generating summary...");
+  setLoading(mode === REPRO_MODE ? "Generating technical brief..." : mode === FLASHCARD_MODE ? "Generating flashcards..." : "Generating summary...");
 
   if (settings.provider === "anthropic") {
-    return callAnthropic(settings.apiKey, settings.model, paperText, arxivUrl, mode);
+    return callAnthropic(settings.apiKey, settings.model, paperText, arxivUrl, mode, customPrompt);
   } else if (settings.provider === "gemini") {
-    return callGemini(settings.apiKey, settings.model, paperText, arxivUrl, mode);
+    return callGemini(settings.apiKey, settings.model, paperText, arxivUrl, mode, customPrompt);
   } else {
-    return callOpenAI(settings.apiKey, settings.model, paperText, arxivUrl, mode);
+    return callOpenAI(settings.apiKey, settings.model, paperText, arxivUrl, mode, customPrompt);
   }
 }
 
@@ -670,37 +772,26 @@ async function setCachedSummary(paperId, markdown) {
 }
 
 // --- Smart filename ---
-function generateFilename(paperId, markdown) {
+function generateFilename(paperId, markdown, mode = SUMMARY_MODE) {
   // Extract year and month from arxiv ID (YYMM.NNNNN -> 20YY-MM)
   const dateMatch = paperId.match(/^(\d{2})(\d{2})/);
-  const year = dateMatch ? `20${dateMatch[1]}-${dateMatch[2]}` : "paper";
+  const datePart = dateMatch ? `20${dateMatch[1]}-${dateMatch[2]}` : "paper";
 
   // Extract title from first "# Title" line
   const titleMatch = markdown.match(/^# (.+)$/m);
-  let titleSlug = "summary";
+  let titleSlug = "Paper";
   if (titleMatch) {
     titleSlug = titleMatch[1]
       .replace(/[^a-zA-Z0-9\s]/g, "")
       .trim()
       .split(/\s+/)
-      .slice(0, 4)
+      .slice(0, 3)
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
       .join("");
   }
 
-  // Extract first author's last name from "**Authors:**" line
-  const authorsMatch = markdown.match(/\*\*Authors?:\*\*\s*(.+)/i);
-  let firstAuthor = "";
-  if (authorsMatch) {
-    // Try to get the first name, handling "First Last, ..." or "First Last (Affiliation)"
-    const authorStr = authorsMatch[1].split(/[,;]/)[0].replace(/\(.*?\)/g, "").trim();
-    const nameParts = authorStr.split(/\s+/);
-    firstAuthor = nameParts[nameParts.length - 1].replace(/[^a-zA-Z]/g, "");
-  }
-
-  const parts = [year, titleSlug];
-  if (firstAuthor) parts.push(firstAuthor);
-  return parts.join("-") + ".md";
+  const suffix = mode === REPRO_MODE ? "ReproBrief" : mode === FLASHCARD_MODE ? "Flashcards" : "Summary";
+  return `${datePart}_${titleSlug}_${suffix}.md`;
 }
 
 // --- Markdown export ---
@@ -718,9 +809,10 @@ function downloadMarkdown(markdown, filename) {
 async function handleSummarize(forceRefresh = false, mode = SUMMARY_MODE) {
   if (isSummarizing) return;
   isSummarizing = true;
+  lastSummarizeMode = mode;
 
   // Use mode-specific cache key
-  const cacheId = mode === REPRO_MODE ? `${currentPaperId}_repro` : currentPaperId;
+  const cacheId = mode === REPRO_MODE ? `${currentPaperId}_repro` : mode === FLASHCARD_MODE ? `${currentPaperId}_flash` : currentPaperId;
 
   try {
     // Check cache first (unless forced refresh)
@@ -730,6 +822,7 @@ async function handleSummarize(forceRefresh = false, mode = SUMMARY_MODE) {
         summaryMarkdown = cached.markdown;
         summaryContent.innerHTML = renderMarkdown(cached.markdown);
         showState(stateSummary);
+        $("export-anki-btn").classList.toggle("hidden", mode !== FLASHCARD_MODE);
         showCacheBadge(true, cached.timestamp);
         isSummarizing = false;
         return;
@@ -738,8 +831,7 @@ async function handleSummarize(forceRefresh = false, mode = SUMMARY_MODE) {
 
     showCacheBadge(false);
     const maxPages = Math.max(1, parseInt($("pages-input").value, 10) || 10);
-    const pdfUrl = getPdfUrl(currentPaperId);
-    const text = await extractPdfText(pdfUrl, maxPages);
+    const text = await extractPdfText(currentPdfUrl, maxPages);
 
     if (text.trim().length < 100) {
       throw new Error("Could not extract meaningful text from the PDF.");
@@ -747,12 +839,21 @@ async function handleSummarize(forceRefresh = false, mode = SUMMARY_MODE) {
 
     // Truncate to ~100k chars to stay within context limits
     extractedPaperText = text.slice(0, 100000);
-    const arxivUrl = `https://arxiv.org/abs/${currentPaperId}`;
-    const markdown = await summarize(extractedPaperText, arxivUrl, mode);
+
+    // Use custom prompt if editor is open and has content
+    const promptContainer = $("prompt-editor-container");
+    const promptTextarea = $("prompt-textarea");
+    let customPrompt = null;
+    if (!promptContainer.classList.contains("hidden") && promptTextarea.value.trim()) {
+      customPrompt = promptTextarea.value.trim();
+    }
+
+    const markdown = await summarize(extractedPaperText, currentPaperLink, mode, customPrompt);
 
     summaryMarkdown = markdown;
     summaryContent.innerHTML = renderMarkdown(markdown);
     showState(stateSummary);
+    $("export-anki-btn").classList.toggle("hidden", mode !== FLASHCARD_MODE);
 
     // Cache the result
     await setCachedSummary(cacheId, markdown);
@@ -781,17 +882,134 @@ function showCacheBadge(show, timestamp) {
 // --- Event listeners ---
 $("summarize-btn").addEventListener("click", () => handleSummarize(false, SUMMARY_MODE));
 $("repro-btn").addEventListener("click", () => handleSummarize(false, REPRO_MODE));
-$("metadata-btn").addEventListener("click", handleCopyMetadata);
+$("flashcard-btn").addEventListener("click", () => handleSummarize(false, FLASHCARD_MODE));
+$("metadata-btn").addEventListener("click", () => handleCopyMetadata($("metadata-btn")));
 $("retry-btn").addEventListener("click", () => handleSummarize(true));
 $("resummarize-btn").addEventListener("click", () => handleSummarize(true));
 
-// --- Copy Metadata ---
-async function handleCopyMetadata() {
-  if (isSummarizing) return;
-  isSummarizing = true;
+// --- Prompt editor ---
+let promptEditorMode = SUMMARY_MODE;
 
-  const btn = $("metadata-btn");
+function loadPromptForMode(mode) {
+  promptEditorMode = mode;
+  const paperLink = currentPaperLink || "https://arxiv.org/abs/XXXX.XXXXX";
+  $("prompt-textarea").value = buildPrompt(paperLink, mode);
+}
+
+$("toggle-prompt-btn").addEventListener("click", () => {
+  const container = $("prompt-editor-container");
+  const isHidden = container.classList.contains("hidden");
+  if (isHidden) {
+    loadPromptForMode(SUMMARY_MODE);
+    container.classList.remove("hidden");
+    $("toggle-prompt-btn").textContent = "Hide Prompt";
+  } else {
+    container.classList.add("hidden");
+    $("toggle-prompt-btn").innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg> Edit Prompt`;
+  }
+});
+
+$("summarize-btn").addEventListener("mouseenter", () => {
+  if (!$("prompt-editor-container").classList.contains("hidden") && promptEditorMode !== SUMMARY_MODE) {
+    loadPromptForMode(SUMMARY_MODE);
+  }
+});
+
+$("repro-btn").addEventListener("mouseenter", () => {
+  if (!$("prompt-editor-container").classList.contains("hidden") && promptEditorMode !== REPRO_MODE) {
+    loadPromptForMode(REPRO_MODE);
+  }
+});
+
+$("flashcard-btn").addEventListener("mouseenter", () => {
+  if (!$("prompt-editor-container").classList.contains("hidden") && promptEditorMode !== FLASHCARD_MODE) {
+    loadPromptForMode(FLASHCARD_MODE);
+  }
+});
+
+$("reset-prompt-btn").addEventListener("click", () => {
+  loadPromptForMode(promptEditorMode);
+});
+
+// --- Anki CSV export ---
+function flashcardsToAnkiCSV(markdown) {
+  const pairs = [];
+  const regex = /^Q:\s*(.+)\nA:\s*([\s\S]*?)(?=\n\nQ:|\n*$)/gm;
+  let match;
+  while ((match = regex.exec(markdown)) !== null) {
+    const question = match[1].trim();
+    const answer = match[2].trim();
+    if (question && answer) pairs.push({ question, answer });
+  }
+  // Anki TSV format: question<tab>answer, with quotes escaped
+  const lines = pairs.map(({ question, answer }) => {
+    const q = `"${question.replace(/"/g, '""')}"`;
+    const a = `"${answer.replace(/"/g, '""')}"`;
+    return `${q}\t${a}`;
+  });
+  return lines.join("\n");
+}
+
+$("export-anki-btn").addEventListener("click", () => {
+  const csv = flashcardsToAnkiCSV(summaryMarkdown);
+  if (!csv) {
+    showError("No flashcards found to export. Generate flashcards first.");
+    return;
+  }
+  const blob = new Blob([csv], { type: "text/tab-separated-values" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const datePart = currentPaperId.match(/^(\d{2})(\d{2})/);
+  const prefix = datePart ? `20${datePart[1]}-${datePart[2]}` : "paper";
+  const titleMatch = summaryMarkdown.match(/^# (.+?)(?:\s*—.*)?$/m);
+  let titleSlug = "Flashcards";
+  if (titleMatch) {
+    titleSlug = titleMatch[1]
+      .replace(/[^a-zA-Z0-9\s]/g, "")
+      .trim()
+      .split(/\s+/)
+      .slice(0, 3)
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join("");
+  }
+  a.href = url;
+  a.download = `${prefix}_${titleSlug}_Anki.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// --- Copy Metadata ---
+function parseMetadataFromMarkdown(markdown) {
+  const titleMatch = markdown.match(/^# (.+)$/m);
+  const linkMatch = markdown.match(/\*\*Link:\*\*\s*(.+)/i);
+  const authorsMatch = markdown.match(/\*\*Authors?:\*\*\s*(.+)/i);
+
+  const title = titleMatch ? titleMatch[1].trim() : null;
+  const link = linkMatch ? linkMatch[1].trim() : null;
+  const authors = authorsMatch ? authorsMatch[1].trim() : null;
+
+  return (title && link) ? `${title}\n${link}${authors ? "\n" + authors : ""}` : null;
+}
+
+async function handleCopyMetadata(triggerBtn) {
+  if (isSummarizing) return;
+
+  const btn = triggerBtn || $("metadata-btn");
   const originalHtml = btn.innerHTML;
+
+  // Fast path: parse from existing summary
+  if (summaryMarkdown) {
+    const metadata = parseMetadataFromMarkdown(summaryMarkdown);
+    if (metadata) {
+      await copyToClipboard(metadata);
+      btn.textContent = "Copied!";
+      setTimeout(() => { btn.innerHTML = originalHtml; }, 1500);
+      return;
+    }
+  }
+
+  // Slow path: LLM extraction from PDF first page
+  isSummarizing = true;
   btn.textContent = "Extracting...";
   btn.disabled = true;
 
@@ -801,23 +1019,21 @@ async function handleCopyMetadata() {
       throw new Error("Please set your API key in Settings (gear icon).");
     }
 
-    // Extract just the first page for metadata (reuse cached PDF if available)
     let arrayBuffer;
     if (cachedPdfData) {
       arrayBuffer = cachedPdfData;
     } else {
-      const pdfUrl = getPdfUrl(currentPaperId);
-      const response = await fetch(pdfUrl);
+      const response = await fetch(currentPdfUrl);
       if (!response.ok) throw new Error(`Failed to download PDF`);
       arrayBuffer = await response.arrayBuffer();
       cachedPdfData = arrayBuffer;
     }
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)) }).promise;
     const page = await pdf.getPage(1);
     const content = await page.getTextContent();
     const firstPageText = content.items.map((item) => item.str).join(" ");
 
-    const arxivUrl = `https://arxiv.org/abs/${currentPaperId}`;
+    const paperUrl = currentPaperLink;
 
     const metadataPrompt = `Extract the metadata from this academic paper's first page. Return ONLY the following format with no other text:
 
@@ -871,46 +1087,20 @@ Be precise. Extract exactly what is written.`;
       result = (await res.json()).choices[0].message.content;
     }
 
-    // Parse the LLM response
     const titleMatch = result.match(/TITLE:\s*(.+)/i);
     const authorsMatch = result.match(/AUTHORS:\s*(.+)/i);
     const affiliationsMatch = result.match(/AFFILIATIONS:\s*(.+)/i);
 
     const title = titleMatch ? titleMatch[1].trim() : "Unknown";
-    const allAuthors = authorsMatch ? authorsMatch[1].split(/,\s*/).map(a => a.trim()).filter(Boolean) : [];
-    const allAffiliations = affiliationsMatch ? affiliationsMatch[1].split(/,\s*/).map(a => a.trim()).filter(Boolean) : [];
+    const authors = authorsMatch ? authorsMatch[1].trim() : "";
+    const affiliations = affiliationsMatch ? affiliationsMatch[1].trim() : "";
 
-    // Format authors: first, second, + N authors, last
-    let authorsFormatted;
-    if (allAuthors.length <= 3) {
-      authorsFormatted = allAuthors.join(", ");
-    } else {
-      const first = allAuthors[0];
-      const second = allAuthors[1];
-      const last = allAuthors[allAuthors.length - 1];
-      const remaining = allAuthors.length - 3;
-      authorsFormatted = `${first}, ${second}, +${remaining} authors, ${last}`;
-    }
+    const parts = [title, paperUrl];
+    if (authors) parts.push(authors);
+    if (affiliations) parts.push(affiliations);
+    const metadata = parts.join("\n");
 
-    // Format affiliations: first and last (if different)
-    let affiliationsFormatted;
-    if (allAffiliations.length === 0) {
-      affiliationsFormatted = "Not specified";
-    } else if (allAffiliations.length === 1) {
-      affiliationsFormatted = allAffiliations[0];
-    } else {
-      const first = allAffiliations[0];
-      const last = allAffiliations[allAffiliations.length - 1];
-      if (first === last) {
-        affiliationsFormatted = first;
-      } else {
-        affiliationsFormatted = `${first}, ${last}`;
-      }
-    }
-
-    const metadata = `${title}\n${arxivUrl}\n${authorsFormatted}\n${affiliationsFormatted}`;
-
-    await navigator.clipboard.writeText(metadata);
+    await copyToClipboard(metadata);
     btn.textContent = "Copied!";
     setTimeout(() => { btn.innerHTML = originalHtml; btn.disabled = false; }, 2000);
   } catch (err) {
@@ -923,17 +1113,19 @@ Be precise. Extract exactly what is written.`;
 }
 
 $("export-md-btn").addEventListener("click", () => {
-  const filename = generateFilename(currentPaperId, summaryMarkdown);
+  const filename = generateFilename(currentPaperId, summaryMarkdown, lastSummarizeMode);
   downloadMarkdown(summaryMarkdown, filename);
 });
 
 $("copy-btn").addEventListener("click", async () => {
-  await navigator.clipboard.writeText(summaryMarkdown);
+  await copyToClipboard(summaryMarkdown);
   const btn = $("copy-btn");
   const original = btn.innerHTML;
   btn.textContent = "Copied!";
   setTimeout(() => (btn.innerHTML = original), 1500);
 });
+
+$("copy-metadata-summary-btn").addEventListener("click", () => handleCopyMetadata($("copy-metadata-summary-btn")));
 
 // Settings
 let editingApiKeys = { anthropic: "", openai: "", gemini: "" };
@@ -1046,35 +1238,56 @@ async function init() {
 
 async function handleUrl(url) {
   currentUrl = url;
-  const id = extractArxivId(url);
-  if (id) {
-    currentPaperId = id;
-    paperId.textContent = `arxiv:${id}`;
+  cachedPdfData = null; // reset cache for new URL
+
+  const arxivId = extractArxivId(url);
+  if (arxivId) {
+    currentPaperId = arxivId;
+    currentPdfUrl = getPdfUrl(arxivId);
+    currentPaperLink = `https://arxiv.org/abs/${arxivId}`;
+    isArxivPaper = true;
+    paperId.textContent = `arxiv:${arxivId}`;
     $("paper-pages").textContent = "";
     showState(stateReady);
 
-    // Load default maxPages from settings into the inline input
     const settings = await loadSettings();
     $("pages-input").value = settings.maxPages;
 
-    // Detect total page count in the background
-    detectPageCount(id);
+    detectPageCount(currentPdfUrl);
+  } else if (isPdfUrl(url)) {
+    currentPaperId = slugFromUrl(url);
+    currentPdfUrl = url;
+    currentPaperLink = url;
+    isArxivPaper = false;
+
+    // Try to show a readable source name
+    try {
+      const hostname = new URL(url).hostname.replace(/^www\./, "");
+      paperId.textContent = `PDF: ${hostname}`;
+    } catch {
+      paperId.textContent = "PDF";
+    }
+    $("paper-pages").textContent = "";
+    showState(stateReady);
+
+    const settings = await loadSettings();
+    $("pages-input").value = settings.maxPages;
+
+    detectPageCount(currentPdfUrl);
   } else {
     showState(stateInitial);
   }
 }
 
-async function detectPageCount(arxivId) {
+async function detectPageCount(pdfUrl) {
   try {
-    const pdfUrl = getPdfUrl(arxivId);
     const response = await fetch(pdfUrl, { method: "GET" });
     if (!response.ok) return;
     const arrayBuffer = await response.arrayBuffer();
     cachedPdfData = arrayBuffer;
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)) }).promise;
     const total = pdf.numPages;
     $("paper-pages").textContent = `${total} pages`;
-    // Cap the input to total if it exceeds
     const input = $("pages-input");
     input.max = total;
     if (parseInt(input.value, 10) > total) {

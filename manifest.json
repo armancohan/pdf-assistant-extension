@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ArXiv Paper Summarizer",
   "version": "1.0.0",
-  "description": "Summarize arxiv papers using an LLM. Click the extension icon on any arxiv page to get a structured summary.",
+  "description": "Summarize academic papers from arxiv, OpenReview, and other sources using an LLM. Click the extension icon on any paper page to get a structured summary.",
   "permissions": [
     "sidePanel",
     "activeTab",
@@ -12,6 +12,10 @@
     "https://arxiv.org/*",
     "https://www.alphaxiv.org/*",
     "https://export.arxiv.org/*",
+    "https://openreview.net/*",
+    "https://aclanthology.org/*",
+    "https://proceedings.neurips.cc/*",
+    "https://proceedings.mlr.press/*",
     "https://api.anthropic.com/*",
     "https://api.openai.com/*",
     "https://generativelanguage.googleapis.com/*"
