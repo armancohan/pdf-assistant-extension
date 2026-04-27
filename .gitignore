@@ -3,6 +3,7 @@ node_modules/
 .env.*
 *.key
 *.pem
+.DS_Store
 
 # API keys / secrets
 secrets.json
