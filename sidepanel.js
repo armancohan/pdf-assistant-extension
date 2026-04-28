@@ -1238,6 +1238,7 @@ async function handleSummarize(forceRefresh = false, mode = SUMMARY_MODE) {
         summaryContent.innerHTML = renderMarkdown(cached.markdown);
         showState(stateSummary);
         $("export-anki-btn").classList.toggle("hidden", mode !== FLASHCARD_MODE);
+        $("generate-flashcards-summary-btn").classList.toggle("hidden", mode === FLASHCARD_MODE);
         showCacheBadge(true, cached.timestamp);
         isSummarizing = false;
         return;
@@ -1401,43 +1402,84 @@ $("prompt-textarea").addEventListener("input", () => {
 });
 
 // --- Anki CSV export ---
-function flashcardsToAnkiCSV(markdown) {
-  // 1. Rich TSV format (e.g. veterinary radiology): a fenced ```tsv code block with multi-column rows.
-  //    Pass through verbatim — Anki imports tab-separated lines directly.
+// Returns { cloze, basic, simple } — only the keys with content are populated.
+//   - cloze: rich TSV cloze cards, ready to import as Cloze note type
+//   - basic: rich TSV basic cards, ready to import as Basic note type
+//   - simple: 2-column Q/A TSV (no cloze syntax, import as Basic)
+function flashcardsToAnkiExport(markdown) {
+  // 1. Rich TSV format: fenced ```tsv code block with 8 columns.
   const tsvBlock = markdown.match(/```(?:tsv)?\n?([\s\S]*?)```/);
-  if (tsvBlock) {
-    const body = tsvBlock[1].trim();
-    // Sanity check: at least one tab-separated line
-    if (body.includes("\t")) return body;
+  if (tsvBlock && tsvBlock[1].includes("\t")) {
+    return splitRichTsv(tsvBlock[1].trim());
   }
 
-  // 2. Q/A format: parse and emit 2-column TSV.
+  // 2. Simple Q/A format.
   const pairs = [];
   const regex = /^Q:\s*(.+)\nA:\s*([\s\S]*?)(?=\n\nQ:|\n*$)/gm;
-  let match;
-  while ((match = regex.exec(markdown)) !== null) {
-    const question = match[1].trim();
-    const answer = match[2].trim();
+  let m;
+  while ((m = regex.exec(markdown)) !== null) {
+    const question = m[1].trim();
+    const answer = m[2].trim();
     if (question && answer) pairs.push({ question, answer });
   }
-  return pairs
-    .map(({ question, answer }) => {
-      const q = `"${question.replace(/"/g, '""')}"`;
-      const a = `"${answer.replace(/"/g, '""')}"`;
-      return `${q}\t${a}`;
-    })
-    .join("\n");
+  if (pairs.length === 0) return {};
+
+  const lines = pairs.map(({ question, answer }) => {
+    return `${escapeTsvField(question)}\t${escapeTsvField(answer)}`;
+  });
+  const header = ["#separator:tab", "#html:true", "#notetype:Basic"].join("\n");
+  return { simple: `${header}\n${lines.join("\n")}` };
 }
 
-$("export-anki-btn").addEventListener("click", () => {
-  const csv = flashcardsToAnkiCSV(summaryMarkdown);
-  if (!csv) {
-    showError("No flashcards found to export. Generate flashcards first.");
-    return;
+function escapeTsvField(s) {
+  // Anki TSV: tabs and newlines aren't allowed in fields. Replace newlines with <br>
+  // (Anki renders it as a line break with #html:true).
+  return s.replace(/\t/g, " ").replace(/\r?\n/g, "<br>");
+}
+
+function splitRichTsv(tsv) {
+  const cloze = [];
+  const basic = [];
+  for (const rawLine of tsv.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const fields = line.split("\t");
+    if (fields.length < 8) continue;
+    const front = (fields[0] || "").trim();
+    const back = (fields[1] || "").trim();
+    const tags = (fields[2] || "").trim();
+    const cardFormat = (fields[7] || "").trim().toLowerCase();
+    if (!front) continue;
+    if (cardFormat === "cloze") {
+      cloze.push(`${escapeTsvField(front)}\t${escapeTsvField(tags)}`);
+    } else {
+      basic.push(`${escapeTsvField(front)}\t${escapeTsvField(back)}\t${escapeTsvField(tags)}`);
+    }
   }
-  const blob = new Blob([csv], { type: "text/tab-separated-values" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
+
+  const result = {};
+  if (cloze.length > 0) {
+    const header = [
+      "#separator:tab",
+      "#html:true",
+      "#notetype:Cloze",
+      "#tags column:2",
+    ].join("\n");
+    result.cloze = `${header}\n${cloze.join("\n")}`;
+  }
+  if (basic.length > 0) {
+    const header = [
+      "#separator:tab",
+      "#html:true",
+      "#notetype:Basic",
+      "#tags column:3",
+    ].join("\n");
+    result.basic = `${header}\n${basic.join("\n")}`;
+  }
+  return result;
+}
+
+function ankiBaseFilename() {
   const datePart = currentPaperId.match(/^(\d{2})(\d{2})/);
   const prefix = datePart ? `20${datePart[1]}-${datePart[2]}` : "paper";
   const titleMatch = summaryMarkdown.match(/^# (.+?)(?:\s*—.*)?$/m);
@@ -1451,10 +1493,36 @@ $("export-anki-btn").addEventListener("click", () => {
       .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
       .join("");
   }
+  return `${prefix}_${titleSlug}`;
+}
+
+function downloadTsv(content, filename) {
+  const blob = new Blob([content], { type: "text/tab-separated-values" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
   a.href = url;
-  a.download = `${prefix}_${titleSlug}_Anki.txt`;
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+$("export-anki-btn").addEventListener("click", () => {
+  const result = flashcardsToAnkiExport(summaryMarkdown);
+  const keys = Object.keys(result);
+  if (keys.length === 0) {
+    showError("No flashcards found to export. Generate flashcards first.");
+    return;
+  }
+  const base = ankiBaseFilename();
+  if (result.simple) {
+    downloadTsv(result.simple, `${base}_Anki.txt`);
+  }
+  if (result.cloze) {
+    downloadTsv(result.cloze, `${base}_Anki_cloze.txt`);
+  }
+  if (result.basic) {
+    downloadTsv(result.basic, `${base}_Anki_basic.txt`);
+  }
 });
 
 // --- Copy Metadata ---
@@ -1605,6 +1673,7 @@ $("copy-btn").addEventListener("click", async () => {
 });
 
 $("copy-metadata-summary-btn").addEventListener("click", () => handleCopyMetadata($("copy-metadata-summary-btn")));
+$("generate-flashcards-summary-btn").addEventListener("click", () => handleSummarize(false, FLASHCARD_MODE));
 
 // Settings
 let editingApiKeys = { anthropic: "", openai: "", gemini: "" };
