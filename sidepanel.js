@@ -218,7 +218,13 @@ function buildMedicalTextbookSummary(sourceUrl) {
 
 **Source:** ${sourceUrl}
 
-Structure your output as follows:
+### Core principle: preserve the chapter's order
+
+The body of the summary MUST follow the chapter's own structure — topics, headings, and sub-headings appear in the same order as in the source. A reader who has the chapter open should be able to scroll through your summary in parallel with the chapter and find each topic at the same relative position. Do NOT reorganize content into pre-defined buckets. Use the chapter's own section titles as your section titles wherever possible (you may shorten them, but keep the order and meaning).
+
+The only exceptions are the consolidated *lookup* sections at the end (Important Numbers, Common Pitfalls, Cheatsheet) — those are explicit cross-cutting summaries that the reader uses for quick recall and review.
+
+### Output structure
 
 # [Section / Chapter Title]
 
@@ -227,33 +233,34 @@ Structure your output as follows:
 ## Micro-Summary
 A 1-3 sentence high-density distillation of the entire section. This is what every student should remember if they only have 30 seconds. Capture the absolute essence — the key disease/concept and what makes it clinically distinctive.
 
-## Core Concepts & Definitions
-The fundamental concepts the section introduces. Define each term precisely using exact medical terminology. Include short, structured definitions suitable for note-taking.
+## Section-by-Section Notes
+Walk through the chapter in the order it presents material. For each section the chapter covers, include a sub-heading that mirrors the chapter's own heading, then summarize that section's content with all the high-yield specifics:
+- Definitions and exact medical terminology introduced in that section.
+- Mechanisms and pathophysiology with cause→effect chains.
+- Diagnostic criteria, classic presentations, red flags as they're introduced.
+- Treatment hierarchies (first-line, second-line) where the chapter discusses them.
+- Distinguishing features versus mimics.
+- Numbers (dose ranges, lab cutoffs, time windows, prevalence/incidence) — preserve them at the point in the narrative where the chapter introduces them.
 
-## Mechanisms & Pathophysiology
-For disease, anatomy, or pharmacology topics: explain the mechanism step by step — etiology → pathophysiology → clinical manifestations → treatment rationale. Use cause→effect chains. For non-disease topics, explain the underlying mechanism or principle.
-
-## Clinical Pearls / High-Yield Points
-The "must-know" facts. These are the points that drive clinical decision-making and frequently appear on exams: classic presentations, diagnostic criteria, red flags, common pitfalls, distinctive features.
-
-## Diagnostic & Clinical Workflow (if applicable)
-Stepwise approach: how to diagnose, classify, and treat. Include differentials, key labs/imaging, and decision points. First-line vs second-line treatments.
+Keep paragraphs tight; use short bullet lists when the chapter itself enumerates discrete items. Do not collapse multiple chapter sections into one — preserve the chapter's natural breakpoints.
 
 ## Important Numbers & Values
-Only those clinically essential to memorize: dose ranges, lab cutoffs, half-lives, prevalence/incidence, time windows. Use a small table when there are several.
+A consolidated reference list (across the whole chapter) of every clinically essential number: dose ranges, lab cutoffs, half-lives, prevalence/incidence, time windows. Use a small table if there are many. Skip if the chapter is quantitatively sparse — do not invent numbers.
 
 ## Common Pitfalls & Misconceptions
-Things commonly misunderstood; classic confusion points (e.g., "X is often confused with Y because…"); subtle distinctions.
+Things commonly misunderstood across the chapter: classic confusion points (e.g., "X is often confused with Y because…"), subtle distinctions. This consolidates pitfalls scattered through the chapter.
 
-## Quick-Recall Checklist
-A bullet list of single-line factoids designed for rapid review (e.g., the night before an exam). Each bullet should stand alone.
+## Cheatsheet — Must Remember
+The 10–15 highest-yield, can't-leave-without items from the entire chapter. Each item is a single short line designed for rapid recall the day before an exam or before a clinical encounter. Cover diagnostic criteria, classic presentations, first-line management, key numbers, and don't-miss diagnoses. These should be the points that a question writer would build a stem around. Each line should stand alone without context.
 
-Style requirements:
+### Style requirements
+
+- Follow the chapter's order in the body. Use the chapter's own section titles.
 - Use exact medical terminology.
 - Prefer concrete numbers over vague language ("incidence ~5/100,000" not "rare").
 - Use cause→effect arrows where useful.
-- Each section should add new value — do not repeat content across sections.
-- Be precise and information-dense; avoid filler.`;
+- Be precise and information-dense; avoid filler.
+- Do not invent content. If the chapter does not address something, leave it out.`;
 }
 
 function buildMedicalJournalSummary(sourceUrl) {
@@ -312,13 +319,14 @@ function buildVeterinaryRadiologySummary(sourceUrl) {
 
 **Source:** ${sourceUrl}
 
-### Core principle
+### Core principles
 
-A summary that loses the specifics is a summary that has lost most of its diagnostic value. The specifics that matter most are: numeric thresholds and timing, formal classification systems (stages, types, grades), named signs and eponyms, characteristic imaging appearances (modality, sequence, view, location), mimics and discriminators, and species/breed/signalment differences. Compress narrative aggressively, but preserve every one of these whenever the chapter provides them. When in doubt, keep the specific.
+1. **Preserve specifics.** A summary that loses the specifics has lost most of its diagnostic value. Specifics that matter most: numeric thresholds and timing, formal classification systems (stages, types, grades), named signs and eponyms, characteristic imaging appearances (modality, sequence, view, location), mimics and discriminators, species/breed/signalment differences. Compress narrative aggressively but preserve every one of these.
+2. **Preserve the chapter's order.** The body of the summary MUST follow the chapter's own structure — topics, headings, and sub-headings appear in the same order as in the source. Use the chapter's own section titles as your section titles wherever possible. A reader with the chapter open should be able to scroll through your summary in parallel and find each topic at the same relative position. Do NOT reorganize content into pre-defined buckets.
+
+The only exceptions are the consolidated *lookup* sections at the end (Quantitative reference, Named signs, Pitfalls, Cheatsheet) — these are explicit cross-cutting summaries the reader uses for quick recall and review.
 
 ### Output structure
-
-Produce a markdown document with the sections below. Some chapters will have rich content for every section, others will not. Include every applicable section, but let the depth match what the chapter provides. Do not pad sections to fill them out, and do not invent material.
 
 # [Chapter Title]
 
@@ -327,48 +335,34 @@ Produce a markdown document with the sections below. Some chapters will have ric
 ## Chapter overview
 2–4 sentences naming the topic, anatomic region or system, imaging modalities discussed, and main clinical contexts.
 
-## Examination technique
-Modality and equipment selection, patient positioning and preparation (sedation/anesthesia where relevant), view and projection choices, technical principles specific to the region (e.g., bisecting angle technique for dental imaging, contrast timing for cross-sectional studies). Include radiation safety considerations when raised.
+## Section-by-section walk-through
+Walk through the chapter in the order it presents material. For each section the chapter covers, include a sub-heading that mirrors the chapter's own heading, then summarize that section's content with all the high-yield specifics that appear there:
+- Examination technique notes (modality, positioning, projections, sedation, contrast timing) at the point the chapter introduces them.
+- Normal anatomy/appearance with size ranges, signal/echogenicity/attenuation characteristics, landmarks, and species/breed/signalment differences.
+- Physiologic and developmental variation (cyclical changes, age-related variation, pregnancy progression, eruption sequences) where the chapter discusses them. Use compact tables for inherently tabular data (timing milestones, measurements through a cycle, eruption ages).
+- Classification systems with the full set of stages/types and the defining feature of each, presented at the point the chapter introduces them (e.g., AVDC tooth resorption stages 1–5 and types 1–3, hip dysplasia scoring OFA/PennHIP/FCI, elbow dysplasia grading, periodontal disease stages, fracture classifications).
+- Pathology entries with: one-line definition or pathophysiologic basis; classic imaging appearance with modality and view specified; key discriminators from mimics; associated findings, complications, concurrent diseases; species/breed/age predilections.
+- Interventional considerations (biopsy, aspiration, therapeutic intervention) where the chapter discusses them.
 
-## Normal anatomy and appearance
-For each anatomic structure or organ covered, describe the normal imaging appearance: size ranges, layering or zonal architecture, signal/echogenicity/attenuation characteristics, landmarks. When the chapter gives different normals for different physiologic states (cycle phase, age, pregnancy, lactation, dentition stage), present each one. When the chapter contrasts species, breeds, or signalments, present each. Preserve naming/numbering systems the chapter uses (e.g., modified Triadan dentition).
-
-## Physiologic and developmental variation
-If the chapter covers cyclical changes, developmental stages, age-related variation, pregnancy progression, lactation, eruption sequences, or post-treatment evolution, dedicate a section. Use compact tables for inherently tabular data (timing of milestones, measurements through a cycle, healing stages, eruption ages).
-
-## Classification systems and grading
-If the chapter presents formal classification systems, give each its own subsection with the full set of stages/types, the defining feature of each, and the imaging correlate. Examples: AVDC tooth resorption stages 1–5 and types 1–3, periodontal disease stages, fracture classifications, hip dysplasia scoring (OFA, PennHIP, FCI), elbow dysplasia grading. These are heavily tested and frequently looked up. Make them easy to find. Omit the section if the chapter has no formal classifications.
-
-## Pathology
-For each disease or abnormality the chapter discusses, give a compact entry with:
-- A one-line definition or pathophysiologic basis.
-- The classic imaging appearance, with modality and view specified.
-- Key discriminators from mimics, when discussed.
-- Associated findings, complications, or concurrent diseases mentioned.
-- Species, breed, age, or signalment predilections noted.
-
-Write these as tight prose paragraphs, one per entity. Avoid bullet lists within entries unless the chapter itself enumerates a discrete set of findings. Group related entities under subheadings when the chapter does (e.g., periodontal disease, endodontic disease, tooth resorption, neoplasia, developmental abnormalities).
+Group entities under subheadings as the chapter does (e.g., periodontal disease, endodontic disease, tooth resorption, neoplasia, developmental abnormalities). Use tight prose; avoid bullets within entries unless the chapter itself enumerates a discrete set.
 
 ## Quantitative reference
-A consolidated section listing every numeric value, threshold, formula, or measurement-based criterion in the chapter (size cutoffs, timing windows, heart rate thresholds, predictive formulas, exposure parameters, prevalence percentages). Format as a short reference list grouped by topic. Keep it short if the chapter is quantitatively sparse — do not invent numbers.
+A consolidated cross-cutting list of every numeric value, threshold, formula, or measurement-based criterion in the chapter (size cutoffs, timing windows, heart rate thresholds, predictive formulas, exposure parameters, prevalence percentages). Group by topic. Keep it short if the chapter is quantitatively sparse — do not invent numbers.
 
 ## Named signs, classifications, and eponyms
-A consolidated list of every named radiographic sign, eponym, classification system reference, or specific named entity in the chapter, each with a one-line description. Omit the section if the chapter has none.
-
-## High-yield pearls
-5–15 short statements capturing the chapter's most exam-relevant or clinically important points. These should be the things a question writer would build a stem around: classic mimics, don't-miss diagnoses, characteristic appearances, common pitfalls, clinically actionable thresholds. Each pearl should stand alone in 1–2 sentences.
+A consolidated list of every named radiographic sign, eponym, classification system reference, or specific named entity in the chapter, each with a one-line description. Omit if the chapter has none.
 
 ## Common pitfalls and mimics
-Distinct from pearls. Normal variants or benign findings that look like pathology, and pathologic entities that look like one another. Always include the discriminating feature when the chapter provides one (e.g., chevron lucencies vs. periapical lesions, mental foramen vs. periapical lucency, follicles vs. cysts, postoperative changes vs. pathology).
+Normal variants or benign findings that look like pathology, and pathologic entities that look like one another. Always include the discriminating feature when the chapter provides one (e.g., chevron lucencies vs. periapical lesions, mental foramen vs. periapical lucency, follicles vs. cysts, postoperative changes vs. pathology).
 
-## Interventional considerations
-If the chapter discusses image-guided procedures (biopsy, aspiration, therapeutic intervention), summarize indications, contraindications, technique notes, and reported outcomes. Omit if not addressed.
+## Cheatsheet — Must Remember
+The 10–20 highest-yield, can't-leave-without items from the entire chapter. Each item is a single short line designed for rapid recall the day before an exam or before reading cases. Cover classic mimics, don't-miss diagnoses, characteristic appearances on specific modalities, classification stages worth memorizing, key numbers/thresholds, and clinically actionable points. Each line should stand alone — these are the things a question writer would build a stem around.
 
 ### Style and formatting
 
 - Write in narrative prose for sections that describe concepts, appearances, and reasoning.
 - Reserve tables for inherently tabular data (timing, measurements, formulas, parallel-attribute classifications).
-- Reserve bullet points for the pearls section, the quantitative reference, the named signs list, and the pitfalls section.
+- Reserve bullet points for the cheatsheet, the quantitative reference, the named signs list, and the pitfalls section.
 - Be specific. "The lesion is hyperechoic with distal acoustic enhancement" is useful; "the lesion has characteristic features" is not. When the chapter gives a range, give the range. When it names a sign, name it. When it cites a percentage, include it.
 - When the chapter compares species, populations, or any parallel groups, preserve the comparison structurally — do not collapse it into a single statement that loses the contrast. If the contrast is dense, a small two-column table is appropriate.
 - Use formal naming/numbering systems (Triadan, anatomic conventions) verbatim — the learner needs to recognize them on exams.
